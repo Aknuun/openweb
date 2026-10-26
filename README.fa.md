@@ -212,6 +212,12 @@ sudo openweb features reset
 - nginx برای حالت ویرایش‌شده (نصب خودکار روی Debian/Ubuntu/RHEL)
 - `ss` (iproute2) اختیاری است و برای بررسی پورت استفاده می‌شود
 
+روی سیستم‌های SELinux (مثل RHEL) اجازه اتصال nginx به upstream لوکال را بدهید:
+
+```bash
+sudo setsebool -P httpd_can_network_connect 1
+```
+
 ## اعتبار
 
 کد رابط اختیاری (`openweb-ui.js`) برگرفته از

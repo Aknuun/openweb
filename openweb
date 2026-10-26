@@ -1145,6 +1145,13 @@ cmd_status() {
   else
     warn "service is not running"
   fi
+  if [[ $UI_MODE == modified ]]; then
+    if systemctl is-active --quiet nginx; then
+      info "nginx is running"
+    else
+      warn "nginx is not running"
+    fi
+  fi
 
   PASSWORD=$(cat "$PASSWORD_FILE" 2>/dev/null || true)
   print_summary
@@ -1152,7 +1159,11 @@ cmd_status() {
 
 cmd_logs() {
   require_root
-  journalctl -u "$SERVICE_NAME" -f --no-pager
+  local units=(-u "$SERVICE_NAME")
+  if [[ -f $CONFIG_FILE ]] && [[ $(config_value UI_MODE) == modified ]]; then
+    units+=(-u nginx)
+  fi
+  journalctl "${units[@]}" -f --no-pager
 }
 
 cmd_password() {

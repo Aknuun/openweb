@@ -213,6 +213,13 @@ sudo openweb features reset
 - nginx for modified mode (installed automatically on Debian/Ubuntu/RHEL)
 - `ss` (iproute2) is optional and used for port checks
 
+On SELinux systems (for example RHEL), allow nginx to connect to the
+loopback upstream:
+
+```bash
+sudo setsebool -P httpd_can_network_connect 1
+```
+
 ## Attribution
 
 The optional UI helper (`openweb-ui.js`) is adapted from
