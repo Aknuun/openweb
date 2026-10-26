@@ -70,7 +70,7 @@ sudo openweb install --original
 
 ```bash
 sudo openweb install --modified
-sudo openweb install --modified --features usage,reasoning,theme,history,rtl,enter,settings,refresh
+sudo openweb install --modified --features usage,reasoning,theme,history,rtl,enter,settings,refresh,progress,sync
 ```
 
 اگر `--modified` بدون `--features` استفاده شود، همه فیچرها فعال می‌شوند.
@@ -122,6 +122,8 @@ sudo openweb install --modified --tls http
 | 6 | `enter` | Enter خط جدید، Ctrl+Enter ارسال |
 | 7 | `settings` | میانبر تنظیمات در نوار ابزار |
 | 8 | `refresh` | دکمه بارگذاری مجدد صفحه |
+| 9 | `progress` | نوار پیشرفت و اورلی بارگذاری درخواست‌ها |
+| 10 | `sync` | رفرش خودکار بعد از بی‌توجهی برای همگام ماندن |
 
 ## مدیریت فیچرها
 
@@ -139,13 +141,13 @@ sudo openweb features
    2) [x] Reasoning summaries toggle
    3) [ ] Day / night theme toggle
    ...
-   9) Enable all
-  10) Disable all
-  11) Reset to defaults
-  12) Apply and exit
+  11) Enable all
+  12) Disable all
+  13) Reset to defaults
+  14) Apply and exit
    0) Cancel
 
-Select one or more numbers (for example 1 3 5) [12]:
+Select one or more numbers (for example 1 3 5) [14]:
 ```
 
 می‌توانید چند شماره را با هم وارد کنید. دستورهای مستقیم:
@@ -153,6 +155,7 @@ Select one or more numbers (for example 1 3 5) [12]:
 ```bash
 sudo openweb features 1 3 5        # تغییر وضعیت فیچرهای ۱، ۳ و ۵
 sudo openweb on 2 4                # فعال‌سازی سریع با شماره
+sudo openweb on 9 10               # نوار پیشرفت + همگام‌سازی خودکار
 sudo openweb off 1                 # غیرفعال‌سازی سریع با شماره
 sudo openweb features enable 2,4   # با نام هم کار می‌کند
 sudo openweb features disable 1

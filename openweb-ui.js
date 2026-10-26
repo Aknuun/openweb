@@ -17,11 +17,13 @@
       enter: true,
       settings: true,
       refresh: true,
+      progress: true,
+      sync: true,
     },
     window.__OPENWEB_FEATURES__ || {}
   );
 
-  const FEATURE_KEYS = ["usage", "reasoning", "theme", "history", "rtl", "enter", "settings", "refresh"];
+  const FEATURE_KEYS = ["usage", "reasoning", "theme", "history", "rtl", "enter", "settings", "refresh", "progress", "sync"];
   if (!FEATURE_KEYS.some((key) => FEATURES[key])) return;
 
   const THEME_KEY = "opencode-color-scheme";
@@ -99,6 +101,73 @@
       background: Canvas;
       color: CanvasText;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+    }
+    .openweb-progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      z-index: 2147483646;
+      pointer-events: none;
+      overflow: hidden;
+      opacity: 0;
+      transition: opacity 150ms ease;
+    }
+    .openweb-progress.on {
+      opacity: 1;
+    }
+    .openweb-progress::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, #6ea8fe, transparent);
+      transform: translateX(-100%);
+    }
+    .openweb-progress.on::before {
+      animation: openweb-progress 1.1s ease-in-out infinite;
+    }
+    @keyframes openweb-progress {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+    .openweb-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483647;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.35);
+      color: #fff;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 14px;
+      backdrop-filter: blur(1.5px);
+      cursor: progress;
+    }
+    .openweb-overlay[hidden] {
+      display: none;
+    }
+    .openweb-overlay-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 18px;
+      border-radius: 12px;
+      background: rgba(20, 22, 28, 0.92);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    }
+    .openweb-spinner {
+      width: 18px;
+      height: 18px;
+      flex: none;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.25);
+      border-top-color: #6ea8fe;
+      animation: openweb-spin 0.8s linear infinite;
+    }
+    @keyframes openweb-spin {
+      to { transform: rotate(360deg); }
     }
     .openweb-history-backdrop {
       position: fixed;
@@ -274,6 +343,124 @@
   `;
   document.head.appendChild(style);
 
+  let showOverlay = () => {};
+  let hideOverlay = () => {};
+
+  if (FEATURES.progress) {
+    const progressBar = document.createElement("div");
+    progressBar.className = "openweb-progress";
+    document.body.appendChild(progressBar);
+
+    const overlay = document.createElement("div");
+    overlay.className = "openweb-overlay";
+    overlay.hidden = true;
+    overlay.innerHTML =
+      '<div class="openweb-overlay-box"><span class="openweb-spinner"></span><span data-openweb-overlay-text></span></div>';
+    document.body.appendChild(overlay);
+    const overlayText = overlay.querySelector("[data-openweb-overlay-text]");
+    let overlayTimer = null;
+    let overlayHintTimer = null;
+
+    showOverlay = (text) => {
+      if (!overlayText) return;
+      overlayText.textContent = text;
+      overlay.hidden = false;
+      clearTimeout(overlayTimer);
+      clearTimeout(overlayHintTimer);
+      overlayHintTimer = setTimeout(() => {
+        if (!overlay.hidden && overlayText) {
+          overlayText.textContent = "هنوز در حال بارگذاری است… کمی صبر کنید";
+        }
+      }, 8000);
+      overlayTimer = setTimeout(hideOverlay, 45000);
+    };
+
+    hideOverlay = () => {
+      overlay.hidden = true;
+      clearTimeout(overlayTimer);
+      clearTimeout(overlayHintTimer);
+    };
+
+    overlay.addEventListener("click", hideOverlay);
+
+    let pending = 0;
+    let progressShowTimer = null;
+    let progressHideTimer = null;
+
+    const beginRequest = () => {
+      pending += 1;
+      if (pending === 1) {
+        clearTimeout(progressShowTimer);
+        clearTimeout(progressHideTimer);
+        progressShowTimer = setTimeout(() => {
+          if (pending > 0) progressBar.classList.add("on");
+        }, 180);
+      }
+    };
+
+    const endRequest = () => {
+      pending = Math.max(0, pending - 1);
+      if (pending === 0) {
+        clearTimeout(progressShowTimer);
+        clearTimeout(progressHideTimer);
+        progressHideTimer = setTimeout(() => progressBar.classList.remove("on"), 200);
+      }
+    };
+
+    if (typeof window.fetch === "function" && !window.fetch.__openwebWrapped) {
+      const originalFetch = window.fetch;
+      const wrappedFetch = function (...args) {
+        beginRequest();
+        let result;
+        try {
+          result = originalFetch.apply(this, args);
+        } catch (error) {
+          endRequest();
+          throw error;
+        }
+        if (result && typeof result.then === "function") {
+          result.then(endRequest, endRequest);
+        } else {
+          endRequest();
+        }
+        return result;
+      };
+      wrappedFetch.__openwebWrapped = true;
+      window.fetch = wrappedFetch;
+    }
+
+    const NEW_SESSION_RE = /(new\s*session|new\s*chat|سشن\s*جدید|گفتگوی?\s*جدید|چت\s*جدید)/i;
+    document.addEventListener(
+      "click",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const element = target.closest("button, a, [role='button']");
+        if (!element) return;
+        const label = [
+          element.getAttribute("aria-label"),
+          element.getAttribute("title"),
+          element.getAttribute("data-testid"),
+          element.textContent,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        if (!NEW_SESSION_RE.test(label)) return;
+
+        showOverlay("در حال باز کردن سشن جدید…");
+        const start = location.pathname + location.search;
+        const watcher = setInterval(() => {
+          if (location.pathname + location.search !== start) {
+            clearInterval(watcher);
+            setTimeout(hideOverlay, 400);
+          }
+        }, 120);
+        setTimeout(() => clearInterval(watcher), 45000);
+      },
+      true
+    );
+  }
+
   function currentSessionId() {
     const match = /\/session\/([^/?#]+)\/?$/.exec(location.pathname);
     if (!match) return "";
@@ -326,6 +513,7 @@
   function openSession(session) {
     const { route, hasDir } = sessionRoute(session);
     closeHistory();
+    hideOverlay();
     if (hasDir) {
       location.href = route;
       return;
@@ -387,6 +575,7 @@
     const extra = targets.length > 1 ? ` و ${targets.length - 1} زیرسشن` : "";
     if (!window.confirm(`سشن «${name}»${extra} برای همیشه حذف شود؟`)) return;
 
+    showOverlay("در حال حذف سشن…");
     Promise.all(
       targets.map((item) =>
         deleteSessionRequest(item)
@@ -397,6 +586,7 @@
           })
       )
     ).then((results) => {
+      hideOverlay();
       const failed = results.filter((ok) => !ok).length;
       const currentId = currentSessionId();
       const deletedCurrent = targets.some((item, index) => item.id === currentId && results[index]);
@@ -826,6 +1016,7 @@
   }
 
   function openHistory() {
+    showOverlay("در حال خواندن سشن‌ها…");
     fetch("/session", {
       headers: { Accept: "application/json" },
       credentials: "same-origin",
@@ -835,8 +1026,14 @@
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.json();
       })
-      .then((list) => renderHistory(list))
-      .catch(() => window.alert("خطا در خواندن سشن‌ها"));
+      .then((list) => {
+        hideOverlay();
+        renderHistory(list);
+      })
+      .catch(() => {
+        hideOverlay();
+        window.alert("خطا در خواندن سشن‌ها");
+      });
   }
 
   function actionButton({ action, title, icon, onClick }) {
@@ -926,6 +1123,47 @@
     });
     window.addEventListener("storage", (event) => {
       if (event.key === THEME_KEY) syncTheme();
+    });
+  }
+
+  if (FEATURES.sync) {
+    let awayStartedAt = 0;
+
+    const refreshAfterAway = () => {
+      if (document.hidden || !awayStartedAt) return;
+      const away = Date.now() - awayStartedAt;
+      awayStartedAt = 0;
+      if (away < 30000) return;
+      location.reload();
+    };
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        awayStartedAt = Date.now();
+        return;
+      }
+      refreshAfterAway();
+    });
+
+    window.addEventListener("focus", refreshAfterAway);
+    window.addEventListener("pagehide", () => {
+      if (!awayStartedAt) return;
+      try {
+        sessionStorage.setItem("openweb.hiddenAt", String(awayStartedAt));
+      } catch {
+        // sessionStorage can be unavailable in private modes
+      }
+    });
+    window.addEventListener("pageshow", (event) => {
+      if (!event.persisted) return;
+      if (!awayStartedAt) {
+        try {
+          awayStartedAt = Number(sessionStorage.getItem("openweb.hiddenAt")) || 0;
+        } catch {
+          awayStartedAt = 0;
+        }
+      }
+      refreshAfterAway();
     });
   }
 

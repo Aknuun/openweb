@@ -30,8 +30,8 @@ readonly NGINX_CACHE_CONF="/etc/nginx/conf.d/openweb-cache.conf"
 readonly NGINX_CACHE_DIR="/var/cache/nginx/openweb"
 readonly CERTBOT_DEPLOY_HOOK="/etc/letsencrypt/renewal-hooks/deploy/openweb"
 
-readonly DEFAULT_FEATURES="usage,reasoning,theme,history,rtl,enter,settings,refresh"
-readonly FEATURE_KEYS=(usage reasoning theme history rtl enter settings refresh)
+readonly DEFAULT_FEATURES="usage,reasoning,theme,history,rtl,enter,settings,refresh,progress,sync"
+readonly FEATURE_KEYS=(usage reasoning theme history rtl enter settings refresh progress sync)
 readonly FEATURE_LABELS=(
   "Usage at a glance (tokens + cost)"
   "Reasoning summaries toggle"
@@ -41,6 +41,8 @@ readonly FEATURE_LABELS=(
   "Enter = newline, Ctrl+Enter = send"
   "Settings shortcut"
   "Refresh page button"
+  "Progress bar and loading overlay"
+  "Auto-refresh to stay in sync after being away"
 )
 
 for _arg in "$@"; do
@@ -230,6 +232,8 @@ ${C_BOLD}Features${C_RESET}
   enter       Enter inserts a newline, Ctrl+Enter sends
   settings    Settings shortcut in the toolbar
   refresh     Reload-page button in the toolbar
+  progress    Progress bar and loading overlay
+  sync        Auto-refresh to stay in sync after being away
 
 ${C_BOLD}Environment${C_RESET}
   OPENWEB_PASSWORD          Non-interactive password (prefer the prompt)
@@ -466,41 +470,41 @@ features_menu() {
       fi
       printf '  %s%2d)%s [%s] %-42s %s\n' "$C_BOLD" "$((index + 1))" "$C_RESET" "$state" "${FEATURE_LABELS[$index]}" "$C_DIM" >/dev/tty
     done
-    printf '\n  %s 9)%s Enable all\n' "$C_BOLD" "$C_RESET" >/dev/tty
-    printf '  %s10)%s Disable all\n' "$C_BOLD" "$C_RESET" >/dev/tty
-    printf '  %s11)%s Reset to defaults\n' "$C_BOLD" "$C_RESET" >/dev/tty
-    printf '  %s12)%s Apply and exit\n' "$C_BOLD" "$C_RESET" >/dev/tty
+    printf '\n  %s11)%s Enable all\n' "$C_BOLD" "$C_RESET" >/dev/tty
+    printf '  %s12)%s Disable all\n' "$C_BOLD" "$C_RESET" >/dev/tty
+    printf '  %s13)%s Reset to defaults\n' "$C_BOLD" "$C_RESET" >/dev/tty
+    printf '  %s14)%s Apply and exit\n' "$C_BOLD" "$C_RESET" >/dev/tty
     printf '  %s 0)%s Cancel\n' "$C_BOLD" "$C_RESET" >/dev/tty
-    printf '\nSelect one or more numbers (for example 1 3 5) [12]: ' >/dev/tty
+    printf '\nSelect one or more numbers (for example 1 3 5) [14]: ' >/dev/tty
     IFS= read -r answer < /dev/tty || die "failed to read features"
 
     case $answer in
-      '' | 12 | s | save | apply)
+      '' | 14 | s | save | apply)
         break
         ;;
       0 | q | cancel)
         FEATURES=$original
         return 1
         ;;
-      9 | a | all)
+      11 | a | all)
         for key in "${FEATURE_KEYS[@]}"; do on[$key]=1; done
         ;;
-      10 | n | none)
+      12 | n | none)
         for key in "${FEATURE_KEYS[@]}"; do on[$key]=0; done
         ;;
-      11 | r | reset)
+      13 | r | reset)
         for key in "${FEATURE_KEYS[@]}"; do on[$key]=1; done
         ;;
       *)
         for token in $answer; do
           case $token in
-            9 | a | all)
+            11 | a | all)
               for key in "${FEATURE_KEYS[@]}"; do on[$key]=1; done
               ;;
-            10 | n | none)
+            12 | n | none)
               for key in "${FEATURE_KEYS[@]}"; do on[$key]=0; done
               ;;
-            11 | r | reset)
+            13 | r | reset)
               for key in "${FEATURE_KEYS[@]}"; do on[$key]=1; done
               ;;
             *)
@@ -787,6 +791,18 @@ download_ui_base() {
   fi
   mv "$tmp" "$UI_BASE_FILE"
   chmod 0644 "$UI_BASE_FILE"
+}
+
+ensure_ui_base() {
+  [[ $UI_MODE == modified ]] || return 0
+  if download_ui_base; then
+    return 0
+  fi
+  if [[ -f $UI_BASE_FILE ]]; then
+    warn "could not refresh the UI helper; using the installed copy"
+    return 0
+  fi
+  die "failed to download the UI helper from ${UI_URL}"
 }
 
 write_ui() {
@@ -1881,6 +1897,7 @@ cmd_install() {
   chown "root:${SERVICE_GROUP}" "$PASSWORD_FILE"
   chmod 0640 "$PASSWORD_FILE"
 
+  ensure_ui_base
   apply_ui
 }
 

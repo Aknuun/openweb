@@ -70,7 +70,7 @@ The OpenCode UI plus the optional helpers, served through a small nginx front:
 
 ```bash
 sudo openweb install --modified
-sudo openweb install --modified --features usage,reasoning,theme,history,rtl,enter,settings,refresh
+sudo openweb install --modified --features usage,reasoning,theme,history,rtl,enter,settings,refresh,progress,sync
 ```
 
 With `--modified` and no `--features`, all helpers are enabled.
@@ -121,6 +121,8 @@ HTTPS. Use `--hostname 127.0.0.1` to keep it local only.
 | 6 | `enter` | Enter inserts a newline; Ctrl+Enter sends |
 | 7 | `settings` | Settings shortcut in the toolbar |
 | 8 | `refresh` | Reload-page button in the toolbar |
+| 9 | `progress` | Progress bar and loading overlay for requests |
+| 10 | `sync` | Auto-refresh after being away to stay in sync |
 
 ## Managing features
 
@@ -138,13 +140,13 @@ sudo openweb features
    2) [x] Reasoning summaries toggle
    3) [ ] Day / night theme toggle
    ...
-   9) Enable all
-  10) Disable all
-  11) Reset to defaults
-  12) Apply and exit
+  11) Enable all
+  12) Disable all
+  13) Reset to defaults
+  14) Apply and exit
    0) Cancel
 
-Select one or more numbers (for example 1 3 5) [12]:
+Select one or more numbers (for example 1 3 5) [14]:
 ```
 
 You can enter several numbers at once. Direct commands:
@@ -152,6 +154,7 @@ You can enter several numbers at once. Direct commands:
 ```bash
 sudo openweb features 1 3 5        # toggle features 1, 3 and 5
 sudo openweb on 2 4                # quick-enable by number
+sudo openweb on 9 10               # progress bar + auto-sync
 sudo openweb off 1                 # quick-disable by number
 sudo openweb features enable 2,4   # names also work
 sudo openweb features disable 1
