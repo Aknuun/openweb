@@ -7,21 +7,51 @@
 Let's Encrypt فعال کند، سرویس را در بوت فعال می‌کند و در پایان همه اطلاعات
 اتصال را با رنگ‌های مختلف نمایش می‌دهد.
 
-می‌توانید **رابط اصلی OpenCode** یا یک **رابط ویرایش‌شده** با قابلیت‌های
-اختیاری برگرفته از [CodeHub](https://github.com/Aknuun/codehub) را نصب کنید.
+می‌توانید **رابط بومی OpenCode v2** یا **رابط v1.19.4 به‌همراه قابلیت‌های
+اختیاری** برگرفته از [CodeHub](https://github.com/Aknuun/codehub) را نصب کنید.
+در حالت v2، سشن‌ها با سرور CLI نسخه ۲ سینک هستند.
 
 [English version](README.md)
 
 ## امکانات
 
+- **رابط بومی v2 با سینک سشن‌های CLI** (پیشنهادی برای کاربران v2)
+- **رابط v1.19.4 + قابلیت‌های سفارشی** به‌صورت اختیاری
 - پنل کنترل شماره‌دار با اجرای `openweb` بدون هیچ آرگومان
 - HTTPS خودکار: دامنه nip.io + گواهی Let's Encrypt + هوک تمدید
-- انتخاب رابط اصلی یا ویرایش‌شده هنگام نصب
 - مدیر فیچر با انتخاب شماره‌ای (`openweb features 1 3 5`)
 - فعال/غیرفعال سریع با شماره (`openweb on 2 4`، `openweb off 1`)
 - دستورهای `update`، `status`، `logs`، `password` و `uninstall`
 - پرسیدن دو باره رمز (حداقل ۸ کاراکتر)
 - بررسی سلامت سرویس قبل از اعلام موفقیت
+
+## موتور وب و سینک سشن‌ها
+
+OpenCode v2 سشن‌ها را در جدول `session_v2` ذخیره می‌کند، ولی رابط وب v1 جدول
+قدیمی `session` را می‌خواند. بنابراین رابط v1 با CLI v2 سشن‌های جدید را
+به‌اشتراک نمی‌گذارد.
+
+هنگام نصب موتور وب را انتخاب کنید:
+
+```bash
+# رابط بومی v2: سشن‌ها با سرور CLI نسخه ۲ سینک هستند
+sudo openweb install --web v2
+
+# رابط v1.19.4 + قابلیت‌های سفارشی: سینک فقط با CLI نسخه ۱
+sudo openweb install --web v1 --modified
+```
+
+| حالت | رابط | سینک سشن | قابلیت‌های سفارشی |
+| --- | --- | --- | --- |
+| `--web v2` | رابط بومی OpenCode v2 | با سرور CLI نسخه ۲ | غیرفعال (v2 نوار پیشرفت و لیست سشن بومی دارد) |
+| `--web v1` | v1.19.4 + سفارشی | با CLI نسخه ۱ | usage، reasoning، theme، history، RTL و ... |
+
+ویزارد تعاملی موتور وب را می‌پرسد؛ نصب فعلی روی v2 است. تغییر بعدی:
+
+```bash
+sudo openweb install --web v2 --reuse
+sudo openweb install --web v1 --modified --reuse
+```
 
 ## نصب سریع
 
@@ -39,8 +69,8 @@ curl -fsSL https://raw.githubusercontent.com/Aknuun/openweb/main/openweb | sudo 
 
 ویزارد تعاملی این موارد را می‌پرسد:
 
-1. حالت نصب: رابط اصلی یا ویرایش‌شده
-2. فیچرها (فقط برای رابط ویرایش‌شده)
+1. موتور وب: رابط بومی v2 (سینک CLI) یا v1.19.4 + رابط سفارشی
+2. در حالت v1: نوع رابط و فیچرها
 3. آدرس و پورت HTTP
 4. نام کاربری ورود
 5. حالت TLS (پیش‌فرض Let's Encrypt)
@@ -56,21 +86,32 @@ https://203.0.113.10.nip.io/
 
 ## حالت‌های نصب
 
-### رابط اصلی
+### رابط بومی v2 (سینک سشن)
 
-رابط خام OpenCode:
+رابط وب OpenCode v2 که سشن‌ها را با سرور CLI نسخه ۲ به اشتراک می‌گذارد:
 
 ```bash
-sudo openweb install --original
+sudo openweb install --web v2
 ```
 
-### رابط ویرایش‌شده
+v2 نوار پیشرفت، لیست سشن، تم و پشتیبانی زبان خودش را دارد. قابلیت‌های سفارشی
+v1 در این حالت غیرفعال هستند.
 
-رابط OpenCode به‌همراه قابلیت‌های اختیاری، از طریق فرانت nginx:
+### رابط اصلی v1
+
+رابط خام OpenCode v1.19.4 (برای استفاده با CLI نسخه ۱):
 
 ```bash
-sudo openweb install --modified
-sudo openweb install --modified --features usage,reasoning,theme,history,rtl,enter,settings,refresh,progress,sync
+sudo openweb install --web v1 --original
+```
+
+### رابط ویرایش‌شده v1
+
+رابط v1.19.4 به‌همراه قابلیت‌های اختیاری، از طریق فرانت nginx:
+
+```bash
+sudo openweb install --web v1 --modified
+sudo openweb install --web v1 --modified --features usage,reasoning,theme,history,rtl,enter,settings,refresh,progress,sync
 ```
 
 اگر `--modified` بدون `--features` استفاده شود، همه فیچرها فعال می‌شوند.
@@ -88,19 +129,22 @@ sudo openweb install --modified --features usage,reasoning,theme,history,rtl,ent
 مثال‌های غیرتعاملی:
 
 ```bash
-# nip.io خودکار + Let's Encrypt
-sudo openweb install --modified --yes --nip-io
+# رابط بومی v2 + nip.io خودکار + Let's Encrypt
+sudo openweb install --web v2 --yes --nip-io
 
-# وجود دامنه یعنی Let's Encrypt
-sudo openweb install --modified --domain 203.0.113.10.nip.io --tls letsencrypt
+# رابط ویرایش‌شده v1 + HTTPS خودکار
+sudo openweb install --web v1 --modified --yes --nip-io
+
+# رابط ویرایش‌شده v1 با دامنه مشخص
+sudo openweb install --web v1 --modified --domain 203.0.113.10.nip.io --tls letsencrypt
 
 # گواهی سفارشی
-sudo openweb install --modified --domain code.example.com --tls custom \
+sudo openweb install --web v1 --modified --domain code.example.com --tls custom \
   --tls-cert /etc/ssl/code.example.com/fullchain.pem \
   --tls-key /etc/ssl/code.example.com/privkey.pem
 
 # فقط HTTP
-sudo openweb install --modified --tls http
+sudo openweb install --web v1 --modified --tls http
 ```
 
 برای Let's Encrypt باید پورت‌های 80 و 443 از بیرون در دسترس باشند. اگر صدور
@@ -110,7 +154,11 @@ sudo openweb install --modified --tls http
 شنونده HTTP ساده (پیش‌فرض `0.0.0.0:5002`) می‌تواند در کنار HTTPS فعال بماند.
 برای دسترسی فقط محلی از `--hostname 127.0.0.1` استفاده کنید.
 
-## فیچرها
+## فیچرها (فقط رابط ویرایش‌شده v1)
+
+این گزینه‌ها برای `--web v1 --modified` هستند. رابط بومی v2 نوار پیشرفت، لیست
+سشن، تم و زبان خودش را دارد؛ در حالت v2 دستور `openweb features` همین را
+توضیح می‌دهد.
 
 | # | نام | کاربرد |
 | --- | --- | --- |
@@ -210,6 +258,7 @@ sudo openweb features list
 | `-u, --user <name>` | `root` | کاربر لینوکسی اجراکننده سرویس |
 | `-U, --username <name>` | `opencode` | نام کاربری ورود |
 | `--password <value>` | پرسیده می‌شود | رمز ورود (حداقل ۸ کاراکتر) |
+| `--web <v1\|v2>` | تعاملی / v1 | موتور وب (v2 سشن‌ها را با CLI سینک می‌کند) |
 | `--original` | تعاملی | رابط اصلی |
 | `--modified` | تعاملی | رابط ویرایش‌شده |
 | `--features <list>` | همه در حالت modified | فهرست فیچرها با کاما |
@@ -226,8 +275,9 @@ sudo openweb features list
 متغیرهای محیطی برای اتوماسیون:
 
 - `OPENWEB_PASSWORD` - رمز (پرسش تعاملی ترجیح دارد)
-- `OPENWEB_UI` - `original` یا `modified`
-- `OPENWEB_FEATURES` - فهرست فیچرها با کاما
+- `OPENWEB_WEB` - `v1` یا `v2`
+- `OPENWEB_UI` - `original` یا `modified` (فقط v1)
+- `OPENWEB_FEATURES` - فهرست فیچرهای v1 با کاما
 - `OPENWEB_DOMAIN` - دامنه HTTPS
 - `OPENWEB_TLS` - `letsencrypt`، `custom` یا `http`
 - `OPENWEB_EMAIL` - ایمیل Let's Encrypt
@@ -239,17 +289,17 @@ sudo openweb features list
 
 ## نسخه‌های OpenCode
 
-رابط ویرایش‌شده برای رابط وب OpenCode نسخه ۱ ساخته شده است. برای پایداری:
+- `--web v2` از OpenCode v2 سیستمی (یا یک نسخه خصوصی v2) استفاده می‌کند و
+  رابط بومی v2 را ارائه می‌دهد. سشن‌ها از طریق جدول `session_v2` با سرور CLI
+  نسخه ۲ مشترک هستند.
+- `--web v1` از نسخه خصوصی v1.19.4 در `/usr/local/lib/openweb/opencode`
+  استفاده می‌کند. رابط ویرایش‌شده به v1 نیاز دارد و سشن‌ها فقط با CLI نسخه ۱
+  (`session`) سینک می‌شوند.
+- CLI سیستمی `opencode` هرگز تغییر نمی‌کند.
+- اجراکننده خودکار v1 (`web`) و v2 (`serve`) را تشخیص می‌دهد.
 
-- حالت ویرایش‌شده از یک نسخه خصوصی OpenCode v1.19.4 در
-  `/usr/local/lib/openweb/opencode` استفاده می‌کند
-- CLI سیستمی `opencode` تغییر نمی‌کند
-- حالت اصلی اگر OpenCode سیستمی نسخه ۱ باشد از آن استفاده می‌کند؛ اگر نسخه ۲
-  باشد (که وب‌سرور و رابط متفاوتی دارد) از نسخه خصوصی v1 استفاده می‌شود
-- اجراکننده در صورت اشاره به باینری v2، خودکار `serve` و برای v1 از `web`
-  استفاده می‌کند
-
-این کار باعث می‌شود به‌روزرسانی خودکار OpenCode سرویس وب را خراب نکند.
+برای سینک سشن‌های CLI از v2 استفاده کنید؛ v1 را فقط اگر به قابلیت‌های سفارشی
+و CLI نسخه ۱ نیاز دارید انتخاب کنید.
 
 ## فایل‌های نصب‌شده
 
@@ -296,12 +346,13 @@ HTTPS توصیه می‌شود و پیش‌فرض نصب تعاملی است. ق
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Aknuun/openweb/main/openweb -o /tmp/openweb
 chmod +x /tmp/openweb
-sudo /tmp/openweb install --reuse --domain <your-domain>.nip.io --tls letsencrypt
+sudo /tmp/openweb install --reuse --domain <your-domain>.nip.io --tls letsencrypt --web v2
 ```
 
-رمز و فیچرها حفظ می‌شوند، فایل دستی قدیمی
-`/etc/nginx/conf.d/openweb-tls.conf` با تنظیمات HTTPS مدیریت‌شده جایگزین
-می‌شود و برای رابط ویرایش‌شده از نسخه خصوصی v1 استفاده می‌شود.
+رمز حفظ می‌شود و نصب به رابط بومی v2 با سینک سشن‌های CLI تغییر می‌کند. فایل
+دستی قدیمی `/etc/nginx/conf.d/openweb-tls.conf` هم با تنظیمات HTTPS
+مدیریت‌شده جایگزین می‌شود. برای نگه‌داشتن رابط سفارشی v1 از
+`--web v1 --modified` و یک CLI نسخه ۱ استفاده کنید.
 
 ## پیش‌نیازها
 

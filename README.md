@@ -7,21 +7,50 @@ password, can enable **automatic HTTPS on a free `<public-ip>.nip.io` domain**
 with Let's Encrypt, enables the service on boot, and prints the connection
 details in color when it is done.
 
-It can serve the **original OpenCode UI** or a **modified UI** with optional
-helpers adapted from [CodeHub](https://github.com/Aknuun/codehub).
+It can serve the **v1.19.4 UI + custom helpers** or the **native OpenCode v2 UI**.
+v2 shares sessions with the v2 CLI server; the custom helpers are v1-only.
 
 [نسخه فارسی](README.fa.md)
 
 ## Highlights
 
+- **v2 native UI with CLI session sync** (recommended for v2 users)
+- Optional **v1.19.4 UI + custom helpers** (usage, reasoning, theme, history, ...)
 - Numbered control panel when you run `openweb` with no arguments
 - Automatic HTTPS: nip.io domain + Let's Encrypt certificate + renewal hook
-- Original UI or modified UI, chosen at install time
 - Feature manager with numbered toggles (`openweb features 1 3 5`)
 - Quick enable/disable by number (`openweb on 2 4`, `openweb off 1`)
 - `update`, `status`, `logs`, `password` and `uninstall` commands
 - Passwords are prompted twice (minimum 8 characters)
 - Health checks before reporting success
+
+## Web engine and session sync
+
+OpenCode v2 stores sessions in `session_v2`, while the v1 web UI reads the
+legacy `session` table. A v1 web UI and a v2 CLI do **not** share new sessions.
+
+Choose the web engine at install time:
+
+```bash
+# v2 native UI: sessions shared with the v2 CLI server
+sudo openweb install --web v2
+
+# v1.19.4 + custom UI helpers: sessions shared with a v1 CLI only
+sudo openweb install --web v1 --modified
+```
+
+| Mode | UI | Session sync | Custom helpers |
+| --- | --- | --- | --- |
+| `--web v2` | native OpenCode v2 | with the v2 CLI server | disabled (v2 has native progress/session list) |
+| `--web v1` | v1.19.4 + custom | with a v1 CLI | usage, reasoning, theme, history, RTL, ... |
+
+The interactive wizard asks for the web engine; the current installation uses
+v2. Switch later with:
+
+```bash
+sudo openweb install --web v2 --reuse
+sudo openweb install --web v1 --modified --reuse
+```
 
 ## Quick install
 
@@ -39,8 +68,8 @@ curl -fsSL https://raw.githubusercontent.com/Aknuun/openweb/main/openweb | sudo 
 
 The interactive wizard asks for:
 
-1. install mode: original or modified UI
-2. features (only for the modified UI)
+1. web engine: v2 native UI (CLI session sync) or v1.19.4 + custom UI
+2. for v1: install mode (original or modified) and features
 3. plain HTTP address and port
 4. web login username
 5. TLS mode (Let's Encrypt is the default)
@@ -56,21 +85,32 @@ https://203.0.113.10.nip.io/
 
 ## Install modes
 
-### Original UI
+### v2 native UI (session sync)
 
-The plain OpenCode web UI:
+The OpenCode v2 web UI, sharing sessions with the v2 CLI server:
 
 ```bash
-sudo openweb install --original
+sudo openweb install --web v2
 ```
 
-### Modified UI
+v2 includes its own progress indicator, session list, themes and language
+support. The custom v1 helpers are disabled in this mode.
 
-The OpenCode UI plus the optional helpers, served through a small nginx front:
+### v1 original UI
+
+The plain v1.19.4 OpenCode web UI (for use with a v1 CLI):
 
 ```bash
-sudo openweb install --modified
-sudo openweb install --modified --features usage,reasoning,theme,history,rtl,enter,settings,refresh,progress,sync
+sudo openweb install --web v1 --original
+```
+
+### v1 modified UI
+
+The v1.19.4 UI plus the optional helpers, served through a small nginx front:
+
+```bash
+sudo openweb install --web v1 --modified
+sudo openweb install --web v1 --modified --features usage,reasoning,theme,history,rtl,enter,settings,refresh,progress,sync
 ```
 
 With `--modified` and no `--features`, all helpers are enabled.
@@ -88,19 +128,22 @@ The interactive installer enables HTTPS by default:
 Non-interactive examples:
 
 ```bash
-# automatic <public-ip>.nip.io + Let's Encrypt
-sudo openweb install --modified --yes --nip-io
+# v2 native UI + automatic <public-ip>.nip.io + Let's Encrypt
+sudo openweb install --web v2 --yes --nip-io
 
-# domain implies Let's Encrypt
-sudo openweb install --modified --domain 203.0.113.10.nip.io --tls letsencrypt
+# v1 modified UI + automatic HTTPS
+sudo openweb install --web v1 --modified --yes --nip-io
+
+# v1 modified UI with a specific domain
+sudo openweb install --web v1 --modified --domain 203.0.113.10.nip.io --tls letsencrypt
 
 # custom certificate
-sudo openweb install --modified --domain code.example.com --tls custom \
+sudo openweb install --web v1 --modified --domain code.example.com --tls custom \
   --tls-cert /etc/ssl/code.example.com/fullchain.pem \
   --tls-key /etc/ssl/code.example.com/privkey.pem
 
 # plain HTTP only
-sudo openweb install --modified --tls http
+sudo openweb install --web v1 --modified --tls http
 ```
 
 Ports 80 and 443 must be reachable for Let's Encrypt. If certificate issuance
@@ -109,7 +152,11 @@ fails, check DNS and TCP port 80, or use `--tls custom` / `--tls http`.
 The plain HTTP listener (default `0.0.0.0:5002`) can stay enabled next to
 HTTPS. Use `--hostname 127.0.0.1` to keep it local only.
 
-## Features
+## Features (v1 modified UI only)
+
+These toggles are for `--web v1 --modified`. The v2 native UI has its own
+progress indicator, session list, theme and language support; `openweb
+features` explains this when v2 is active.
 
 | # | Name | What it does |
 | --- | --- | --- |
@@ -209,6 +256,7 @@ Run `sudo openweb` with no command to get the numbered panel:
 | `-u, --user <name>` | `root` | Linux user that runs the service |
 | `-U, --username <name>` | `opencode` | Web login username |
 | `--password <value>` | prompted | Web login password (min 8 chars) |
+| `--web <v1\|v2>` | interactive / v1 | Web engine (v2 shares sessions with the CLI) |
 | `--original` | interactive | Serve the unmodified UI |
 | `--modified` | interactive | Serve the modified UI |
 | `--features <list>` | all when modified | Comma-separated feature list |
@@ -225,8 +273,9 @@ Run `sudo openweb` with no command to get the numbered panel:
 Automation environment variables:
 
 - `OPENWEB_PASSWORD` - password (prefer the prompt)
-- `OPENWEB_UI` - `original` or `modified`
-- `OPENWEB_FEATURES` - comma-separated feature list
+- `OPENWEB_WEB` - `v1` or `v2`
+- `OPENWEB_UI` - `original` or `modified` (v1 only)
+- `OPENWEB_FEATURES` - comma-separated v1 feature list
 - `OPENWEB_DOMAIN` - HTTPS domain
 - `OPENWEB_TLS` - `letsencrypt`, `custom` or `http`
 - `OPENWEB_EMAIL` - Let's Encrypt email
@@ -238,18 +287,17 @@ Automation environment variables:
 
 ## OpenCode versions
 
-The modified UI targets the OpenCode v1 web interface. To keep it stable:
+- `--web v2` uses the system OpenCode v2 (or installs a private v2 copy) and
+  serves the native v2 UI. Sessions are shared with the v2 CLI server through
+  the `session_v2` table.
+- `--web v1` uses a private v1.19.4 copy in
+  `/usr/local/lib/openweb/opencode`. The modified UI requires v1. Sessions sync
+  only with a v1 CLI (`session` table).
+- The system `opencode` CLI is **never** modified.
+- The launcher auto-detects v1 (`web`) and v2 (`serve`).
 
-- modified mode uses a private copy of OpenCode v1.19.4 in
-  `/usr/local/lib/openweb/opencode`
-- the system `opencode` CLI is **not** modified
-- original mode uses the system OpenCode when it is v1; if the system CLI is
-  v2 (which uses a different web server and UI), openweb uses the private v1
-  copy for the managed service
-- the launcher auto-detects v1 (`web`) and v2 (`serve`) if you point
-  `OPENCODE_BIN` at a v2 binary
-
-This prevents an automatic OpenCode upgrade from breaking the web service.
+Use v2 for CLI session sync; use v1 only if you need the custom helpers and
+run a v1 CLI.
 
 ## Installed files
 
@@ -297,12 +345,13 @@ If you already have a working installation:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Aknuun/openweb/main/openweb -o /tmp/openweb
 chmod +x /tmp/openweb
-sudo /tmp/openweb install --reuse --domain <your-domain>.nip.io --tls letsencrypt
+sudo /tmp/openweb install --reuse --domain <your-domain>.nip.io --tls letsencrypt --web v2
 ```
 
-This keeps the password and features, replaces an old manual
-`/etc/nginx/conf.d/openweb-tls.conf` with the managed HTTPS configuration, and
-uses the private v1 OpenCode build for the modified UI.
+This keeps the password and switches to the v2 native UI with CLI session
+sync. It also replaces an old manual `/etc/nginx/conf.d/openweb-tls.conf` with
+the managed HTTPS configuration. To keep the custom v1 UI instead, use
+`--web v1 --modified` and a v1 CLI.
 
 ## Requirements
 
