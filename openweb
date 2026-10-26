@@ -26,6 +26,8 @@ readonly NGINX_CONF="/etc/nginx/conf.d/openweb.conf"
 readonly NGINX_MAP="/etc/nginx/conf.d/openweb-upgrade.conf"
 readonly NGINX_TLS_CONF="/etc/nginx/conf.d/openweb-tls.conf"
 readonly NGINX_ACME_CONF="/etc/nginx/conf.d/openweb-acme.conf"
+readonly NGINX_CACHE_CONF="/etc/nginx/conf.d/openweb-cache.conf"
+readonly NGINX_CACHE_DIR="/var/cache/nginx/openweb"
 readonly CERTBOT_DEPLOY_HOOK="/etc/letsencrypt/renewal-hooks/deploy/openweb"
 
 readonly DEFAULT_FEATURES="usage,reasoning,theme,history,rtl,enter,settings,refresh"
@@ -88,6 +90,7 @@ PASSWORD_REUSED=0
 ASSUME_YES=0
 REUSE=0
 NGINX_INSTALLED_BY_OPENWEB=0
+ACME_HTTP_AVAILABLE=1
 
 OPT_PORT=""
 OPT_HOST=""
@@ -644,6 +647,132 @@ check_port_free() {
   die "port ${LISTEN_PORT} is already in use"
 }
 
+port_owner() {
+  local port=$1
+  have ss || return 0
+  ss -ltnp 2>/dev/null | awk -v p=":${port}$" 'NR > 1 && $4 ~ p { print $6; exit }' \
+    | sed -n 's/.*users:(("\([^"]*\)".*/\1/p'
+}
+
+nginx_config_uses_port() {
+  local port=$1 file
+  local -a files=(/etc/nginx/nginx.conf)
+  for file in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/*; do
+    [[ -f $file ]] && files+=("$file")
+  done
+  for file in "${files[@]}"; do
+    if sed 's/#.*//' "$file" 2>/dev/null \
+      | grep -Eq "listen[[:space:]]+([^;]*[.:])?${port}([[:space:];]|\$)"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+port_owned_by_nginx() {
+  systemctl is-active --quiet nginx || return 1
+  nginx_config_uses_port "$1"
+}
+
+port_available_for_nginx() {
+  port_free "$1" || port_owned_by_nginx "$1"
+}
+
+wait_port_free() {
+  local port=$1 attempt
+  have ss || return 0
+  for ((attempt = 1; attempt <= 20; attempt++)); do
+    if port_free "$port"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+find_free_port_excluding() {
+  local port=$1 skip bad
+  shift
+  have ss || { printf '%s' "$port"; return 0; }
+  while (( port <= 65535 )); do
+    bad=0
+    for skip in "$@"; do
+      if [[ -n $skip && $port == "$skip" ]]; then
+        bad=1
+      fi
+    done
+    if (( ! bad )) && port_free "$port"; then
+      printf '%s' "$port"
+      return 0
+    fi
+    port=$((port + 1))
+  done
+  die "no free port found"
+}
+
+select_listen_port() {
+  if tls_enabled && [[ $LISTEN_PORT == 80 ]]; then
+    warn "port 80 is reserved for the ACME challenge; moving the plain HTTP front to 5002"
+    LISTEN_PORT=5002
+  fi
+  if wait_port_free "$LISTEN_PORT"; then
+    return 0
+  fi
+  if port_owned_by_nginx "$LISTEN_PORT" && [[ -f $NGINX_CONF ]] && [[ $(config_value LISTEN_PORT) == "$LISTEN_PORT" ]]; then
+    return 0
+  fi
+  local new
+  new=$(find_free_port_excluding "$((LISTEN_PORT + 1))" 80 443 "$HTTPS_PORT")
+  warn "port ${LISTEN_PORT} is in use; using ${new} for the plain HTTP front"
+  LISTEN_PORT=$new
+}
+
+select_https_port() {
+  if [[ -z $HTTPS_PORT ]]; then
+    HTTPS_PORT=443
+  fi
+  if [[ $HTTPS_PORT == 80 || $HTTPS_PORT == "$LISTEN_PORT" ]]; then
+    warn "HTTPS port ${HTTPS_PORT} conflicts with another listener; selecting a free port"
+    HTTPS_PORT=443
+    if [[ $HTTPS_PORT == "$LISTEN_PORT" ]]; then
+      HTTPS_PORT=8443
+    fi
+  fi
+  if port_available_for_nginx "$HTTPS_PORT"; then
+    return 0
+  fi
+  local new
+  new=$(find_free_port_excluding 8443 80 "$LISTEN_PORT" "$UPSTREAM_PORT")
+  warn "HTTPS port ${HTTPS_PORT} is in use; using ${new} instead"
+  HTTPS_PORT=$new
+}
+
+select_upstream_port() {
+  if [[ -n $UPSTREAM_PORT ]] && wait_port_free "$UPSTREAM_PORT" \
+    && [[ $UPSTREAM_PORT != "$LISTEN_PORT" ]] \
+    && [[ $UPSTREAM_PORT != "$HTTPS_PORT" ]] \
+    && [[ $UPSTREAM_PORT != 80 ]]; then
+    return 0
+  fi
+  UPSTREAM_PORT=$(find_free_port_excluding "$((LISTEN_PORT + 1))" 80 "$LISTEN_PORT" "$HTTPS_PORT")
+}
+
+resolve_ports() {
+  if tls_enabled; then
+    if [[ -z $HTTPS_PORT ]]; then
+      HTTPS_PORT=443
+    fi
+    if [[ $LISTEN_PORT == 80 || $LISTEN_PORT == 443 || $LISTEN_PORT == "$HTTPS_PORT" ]]; then
+      warn "moving the plain HTTP front to 5002 so it does not conflict with HTTPS/ACME"
+      LISTEN_PORT=5002
+    fi
+  fi
+  select_listen_port
+  if tls_enabled; then
+    select_https_port
+  fi
+}
+
 download_ui_base() {
   need curl
   mkdir -p "$RUNNER_DIR"
@@ -848,7 +977,7 @@ ${ipv6_line}
     }
 
     location / {
-        return 301 https://\$host\$request_uri;
+        return 404;
     }
 }
 EOF
@@ -862,7 +991,11 @@ issue_certificate() {
 
   info "requesting a Let's Encrypt certificate for ${DOMAIN}"
   write_acme_conf
-  reload_nginx
+  if ! reload_nginx 1; then
+    rm -f "$NGINX_ACME_CONF"
+    warn "could not activate the ACME challenge on port 80"
+    return 1
+  fi
 
   local -a args=(certonly --webroot -w /var/www/html -d "$DOMAIN" --non-interactive --agree-tos --keep-until-expiring --preferred-challenges http)
   if [[ -n $TLS_EMAIL ]]; then
@@ -873,14 +1006,16 @@ issue_certificate() {
 
   if ! certbot "${args[@]}"; then
     rm -f "$NGINX_ACME_CONF"
-    reload_nginx >/dev/null 2>&1 || true
-    die "Let's Encrypt certificate issuance failed for ${DOMAIN}. Check DNS and TCP port 80, or use --tls custom/http."
+    reload_nginx 1 >/dev/null 2>&1 || true
+    error "Let's Encrypt certificate issuance failed for ${DOMAIN}. Check DNS and TCP port 80, or use --tls custom/http."
+    return 1
   fi
 
   rm -f "$NGINX_ACME_CONF"
-  reload_nginx >/dev/null 2>&1 || true
+  reload_nginx 1 >/dev/null 2>&1 || true
   install_deploy_hook
   info "Let's Encrypt certificate is ready"
+  return 0
 }
 
 ensure_nginx() {
@@ -907,6 +1042,7 @@ write_nginx() {
   local listen_line proxy_block ui_location sub_filter_line cert key
   local ipv6_plain="" ipv6_acme="" ipv6_https=""
   local http2_directive="" https_http2="" nginx_version major minor
+  local https_redirect hsts_header nginx_user
 
   if ipv6_available; then
     ipv6_acme="    listen [::]:80;"
@@ -924,6 +1060,14 @@ write_nginx() {
     fi
   else
     https_http2=" http2"
+  fi
+
+  if [[ $HTTPS_PORT == 443 ]]; then
+    https_redirect="https://\$host\$request_uri"
+    hsts_header='    add_header Strict-Transport-Security "max-age=31536000" always;'
+  else
+    https_redirect="https://\$host:${HTTPS_PORT}\$request_uri"
+    hsts_header=""
   fi
 
   cat > "$NGINX_MAP" <<'EOF'
@@ -965,10 +1109,69 @@ EOF
 "
   fi
 
+  gzip_block="    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_min_length 1024;
+    gzip_comp_level 5;
+    gzip_types text/plain text/css application/json application/javascript text/javascript application/xml image/svg+xml application/manifest+json;"
+
+  assets_location="    location ^~ /assets/ {
+        proxy_pass http://127.0.0.1:${UPSTREAM_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Accept-Encoding \"\";
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control \"public, max-age=31536000, immutable\";
+    }
+"
+
+  provider_location="    location = /provider {
+        proxy_pass http://127.0.0.1:${UPSTREAM_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Port \$server_port;
+        proxy_set_header Accept-Encoding \"\";
+        proxy_cache openweb_cache;
+        proxy_cache_key \"\$scheme\$request_method\$host\$request_uri\$http_authorization\";
+        proxy_cache_methods GET HEAD;
+        proxy_cache_valid 200 120s;
+        proxy_cache_lock on;
+        proxy_cache_lock_timeout 10s;
+        proxy_cache_background_update on;
+        proxy_cache_use_stale updating error timeout http_500 http_502 http_503 http_504;
+        proxy_cache_bypass \$http_cache_control;
+        proxy_no_cache \$http_cache_control;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control \"private, max-age=60\";
+        add_header X-OpenWeb-Cache \$upstream_cache_status;
+        proxy_buffering on;
+    }
+"
+
+  mkdir -p "$NGINX_CACHE_DIR"
+  chmod 0700 "$NGINX_CACHE_DIR"
+  nginx_user=$(sed -n 's/^user[[:space:]]\+\([^;]*\);.*/\1/p' /etc/nginx/nginx.conf 2>/dev/null | awk '{print $1}')
+  [[ -n $nginx_user ]] || nginx_user=www-data
+  if id "$nginx_user" >/dev/null 2>&1; then
+    chown -R "$nginx_user" "$NGINX_CACHE_DIR" 2>/dev/null || true
+  fi
+  cat > "$NGINX_CACHE_CONF" <<EOF
+proxy_cache_path ${NGINX_CACHE_DIR} levels=1:2 keys_zone=openweb_cache:16m max_size=128m inactive=10m use_temp_path=off;
+EOF
+  chmod 0644 "$NGINX_CACHE_CONF"
+
   rm -f "$NGINX_TLS_CONF" "$NGINX_ACME_CONF"
 
   {
-    if tls_enabled; then
+    if tls_enabled && (( ACME_HTTP_AVAILABLE == 1 )); then
       cat <<EOF
 server {
     listen 80;
@@ -982,7 +1185,7 @@ ${ipv6_acme}
     }
 
     location / {
-        return 301 https://\$host\$request_uri;
+        return 301 ${https_redirect};
     }
 }
 EOF
@@ -1006,7 +1209,9 @@ ${ipv6_plain}
     server_name _;
     client_max_body_size 50m;
 
-${ui_location}    location / {
+${gzip_block}
+
+${provider_location}${assets_location}${ui_location}    location / {
 ${proxy_block}
 ${sub_filter_line}    }
 }
@@ -1032,14 +1237,16 @@ ${http2_directive}
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 1d;
 
-    add_header Strict-Transport-Security "max-age=31536000" always;
+${hsts_header}
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
     add_header Referrer-Policy no-referrer always;
 
     client_max_body_size 50m;
 
-${ui_location}    location / {
+${gzip_block}
+
+${provider_location}${assets_location}${ui_location}    location / {
 ${proxy_block}
 ${sub_filter_line}    }
 }
@@ -1050,10 +1257,22 @@ EOF
 }
 
 reload_nginx() {
-  nginx -t 2>&1 || die "nginx configuration test failed"
-  if ! systemctl reload nginx 2>/dev/null; then
-    systemctl restart nginx 2>/dev/null || die "failed to reload nginx"
+  local soft=${1:-0}
+  if ! nginx -t 2>&1; then
+    if (( soft )); then
+      return 1
+    fi
+    die "nginx configuration test failed"
   fi
+  if ! systemctl reload nginx 2>/dev/null; then
+    if ! systemctl restart nginx 2>/dev/null; then
+      if (( soft )); then
+        return 1
+      fi
+      die "failed to reload nginx"
+    fi
+  fi
+  return 0
 }
 
 remove_nginx() {
@@ -1074,6 +1293,11 @@ remove_nginx() {
     rm -f "$NGINX_ACME_CONF"
     removed=1
   fi
+  if [[ -f $NGINX_CACHE_CONF ]]; then
+    rm -f "$NGINX_CACHE_CONF"
+    removed=1
+  fi
+  rm -rf "$NGINX_CACHE_DIR"
   if (( removed )) && systemctl is-active --quiet nginx; then
     if ! nginx -t >/dev/null 2>&1 || ! systemctl reload nginx >/dev/null 2>&1; then
       warn "nginx could not be reloaded after removing the openweb configuration"
@@ -1218,8 +1442,13 @@ print_summary() {
   printf '\n  %sKeep these credentials somewhere safe.%s\n' "$C_YELLOW" "$C_RESET"
 
   if tls_enabled; then
-    printf '  %sTLS:%s HTTPS is enabled with %s. Ports 80 and %s must stay reachable for certificate renewal.\n' "$C_GREEN" "$C_RESET" "$TLS_MODE" "$HTTPS_PORT"
-    printf '  %sFirewall:%s if a firewall is enabled, allow TCP 80 and %s (for example: sudo ufw allow 80/tcp; sudo ufw allow %s/tcp).\n' "$C_RED" "$C_RESET" "$HTTPS_PORT" "$HTTPS_PORT"
+    if (( ACME_HTTP_AVAILABLE == 1 )); then
+      printf '  %sTLS:%s HTTPS is enabled with %s. Ports 80 and %s must stay reachable for certificate renewal.\n' "$C_GREEN" "$C_RESET" "$TLS_MODE" "$HTTPS_PORT"
+      printf '  %sFirewall:%s if a firewall is enabled, allow TCP 80 and %s (for example: sudo ufw allow 80/tcp; sudo ufw allow %s/tcp).\n' "$C_RED" "$C_RESET" "$HTTPS_PORT" "$HTTPS_PORT"
+    else
+      printf '  %sTLS warning:%s port 80 is unavailable, so the HTTP redirect and automatic certificate renewal are disabled. Use the HTTPS URL above.\n' "$C_YELLOW" "$C_RESET"
+      printf '  %sFirewall:%s allow TCP %s for HTTPS.\n' "$C_RED" "$C_RESET" "$HTTPS_PORT"
+    fi
   elif [[ $LISTEN_HOST == 0.0.0.0 || $LISTEN_HOST == '::' || $LISTEN_HOST == '*' ]]; then
     printf '  %sSecurity:%s the service is exposed over plain HTTP. Add HTTPS with: sudo openweb install --domain <name>.nip.io --tls letsencrypt\n' "$C_RED" "$C_RESET"
     printf '  %sFirewall:%s if a firewall is enabled, allow TCP %s (for example: sudo ufw allow %s/tcp).\n' "$C_RED" "$C_RESET" "$LISTEN_PORT" "$LISTEN_PORT"
@@ -1265,6 +1494,13 @@ load_config() {
   : "${TLS_EMAIL:=}"
   : "${HTTPS_PORT:=443}"
   FEATURES_SET=1
+  if tls_enabled; then
+    if port_available_for_nginx 80; then
+      ACME_HTTP_AVAILABLE=1
+    else
+      ACME_HTTP_AVAILABLE=0
+    fi
+  fi
   SERVICE_HOME=$(getent passwd "$SERVICE_USER" | cut -d: -f6)
 }
 
@@ -1419,36 +1655,58 @@ interactive_wizard() {
 }
 
 apply_ui() {
-  local old_listen_port old_https_port
-  old_listen_port=$(config_value LISTEN_PORT)
-  old_https_port=$(config_value HTTPS_PORT)
-
   systemctl stop "$SERVICE_NAME" 2>/dev/null || true
 
   if use_nginx; then
     ensure_nginx
-
-    if [[ -z $UPSTREAM_PORT ]] || [[ $UPSTREAM_PORT == "$LISTEN_PORT" ]] || [[ $UPSTREAM_PORT == "$HTTPS_PORT" ]] || ! port_free "$UPSTREAM_PORT"; then
-      UPSTREAM_PORT=$(find_free_port "$((LISTEN_PORT + 1))")
-    fi
-
-    if [[ ! -f $NGINX_CONF ]]; then
-      check_port_free
-    elif [[ -n $old_listen_port ]] && [[ $old_listen_port != "$LISTEN_PORT" ]] && ! port_free "$LISTEN_PORT"; then
-      die "port ${LISTEN_PORT} is already in use"
-    fi
-
-    if tls_enabled; then
-      if [[ ! -f $NGINX_CONF ]] && [[ ! -f $NGINX_TLS_CONF ]] && ! port_free "$HTTPS_PORT"; then
-        die "HTTPS port ${HTTPS_PORT} is already in use"
-      fi
-      if [[ -n $old_https_port ]] && [[ $old_https_port != "$HTTPS_PORT" ]] && [[ -f $NGINX_CONF ]] && ! port_free "$HTTPS_PORT"; then
-        die "HTTPS port ${HTTPS_PORT} is already in use"
-      fi
-    fi
   else
     remove_nginx
-    check_port_free
+  fi
+
+  # Pick free ports instead of failing when 443, 80 or the plain HTTP port is taken.
+  resolve_ports
+  if use_nginx; then
+    select_upstream_port
+  fi
+
+  ACME_HTTP_AVAILABLE=1
+  if tls_enabled; then
+    if port_available_for_nginx 80; then
+      ACME_HTTP_AVAILABLE=1
+    else
+      ACME_HTTP_AVAILABLE=0
+      warn "port 80 is in use by another service; the HTTP redirect and automatic certificate renewal will be skipped"
+    fi
+  fi
+
+  if tls_enabled && [[ $TLS_MODE == letsencrypt ]]; then
+    ensure_certbot
+    if ! cert_exists || certificate_needs_renewal; then
+      if (( ACME_HTTP_AVAILABLE == 0 )); then
+        warn "cannot request a Let's Encrypt certificate because port 80 is unavailable; continuing without HTTPS"
+        TLS_MODE=http
+        HTTPS_PORT=""
+      else
+        step "requesting the TLS certificate"
+        if ! issue_certificate; then
+          warn "certificate issuance failed; continuing without HTTPS (fix DNS/port 80 and rerun)"
+          TLS_MODE=http
+          HTTPS_PORT=""
+        fi
+      fi
+    else
+      install_deploy_hook
+    fi
+  fi
+
+  if ! tls_enabled; then
+    ACME_HTTP_AVAILABLE=0
+  fi
+
+  # If TLS fell back to HTTP and the original UI is selected, nginx is no longer needed.
+  if ! use_nginx; then
+    remove_nginx
+    resolve_ports
   fi
 
   step "writing configuration"
@@ -1469,18 +1727,6 @@ apply_ui() {
   write_unit
 
   if use_nginx; then
-    if tls_enabled && [[ $TLS_MODE == letsencrypt ]]; then
-      ensure_certbot
-      if ! cert_exists || certificate_needs_renewal; then
-        step "requesting the TLS certificate"
-        write_acme_conf
-        reload_nginx
-        issue_certificate
-      else
-        install_deploy_hook
-      fi
-    fi
-
     step "configuring nginx"
     write_nginx
     reload_nginx
@@ -1605,6 +1851,7 @@ cmd_install() {
     set_features "$DEFAULT_FEATURES"
   fi
 
+  resolve_ports
   validate_settings
 
   if [[ -z $PASSWORD ]]; then
@@ -1784,6 +2031,7 @@ cmd_features() {
   PASSWORD=$(cat "$PASSWORD_FILE" 2>/dev/null || true)
   [[ -n $PASSWORD ]] || die "password file is missing; run 'openweb install'"
 
+  resolve_ports
   validate_settings
   apply_ui
   printf '  %sReload the browser tab to apply feature changes.%s\n\n' "$C_DIM" "$C_RESET"
