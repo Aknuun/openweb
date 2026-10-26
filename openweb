@@ -6,8 +6,10 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_VERSION="2.0.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
+readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
+readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
 readonly SERVICE_NAME="openweb"
 readonly UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 readonly CONFIG_DIR="/etc/openweb"
@@ -15,7 +17,24 @@ readonly CONFIG_FILE="${CONFIG_DIR}/config"
 readonly PASSWORD_FILE="${CONFIG_DIR}/password"
 readonly RUNNER_DIR="/usr/local/lib/openweb"
 readonly RUNNER_FILE="${RUNNER_DIR}/run"
+readonly UI_BASE_FILE="${RUNNER_DIR}/ui-base.js"
+readonly UI_FILE="${RUNNER_DIR}/ui.js"
 readonly MANAGER_BIN="/usr/local/bin/openweb"
+readonly NGINX_CONF="/etc/nginx/conf.d/openweb.conf"
+readonly NGINX_MAP="/etc/nginx/conf.d/openweb-upgrade.conf"
+
+readonly DEFAULT_FEATURES="usage,reasoning,theme,history,rtl,enter,settings,refresh"
+readonly FEATURE_KEYS=(usage reasoning theme history rtl enter settings refresh)
+readonly FEATURE_LABELS=(
+  "Usage at a glance (tokens + cost)"
+  "Reasoning summaries toggle"
+  "Day / night theme toggle"
+  "Session history + delete"
+  "RTL / bidi input"
+  "Enter = newline, Ctrl+Enter = send"
+  "Settings shortcut"
+  "Refresh page button"
+)
 
 for _arg in "$@"; do
   if [[ $_arg == "--no-color" ]]; then
@@ -49,12 +68,33 @@ SERVICE_USER="root"
 AUTH_USER="opencode"
 LISTEN_HOST="0.0.0.0"
 LISTEN_PORT="5002"
+UI_MODE=""
+FEATURES=""
+FEATURES_SET=0
+UPSTREAM_PORT=""
 PASSWORD="${OPENWEB_PASSWORD:-}"
+PASSWORD_REUSED=0
 ASSUME_YES=0
+REUSE=0
+NGINX_INSTALLED_BY_OPENWEB=0
+
+OPT_PORT=""
+OPT_HOST=""
+OPT_USER=""
+OPT_AUTH_USER=""
+OPT_UI_MODE=""
+OPT_FEATURES=""
+OPT_FEATURES_SET=0
+ENV_UI="${OPENWEB_UI:-}"
+ENV_FEATURES="${OPENWEB_FEATURES:-}"
+if [[ ${OPENWEB_REUSE:-0} == 1 ]]; then
+  REUSE=1
+fi
 
 SERVICE_GROUP=""
 SERVICE_HOME=""
 OPENCODE_BIN=""
+REPLY_VALUE=""
 
 info() { printf '%s==>%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
 step() { printf '  %s-%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
@@ -76,9 +116,11 @@ ${C_BOLD}Usage${C_RESET}
   sudo openweb [command] [options]
 
 ${C_BOLD}Commands${C_RESET}
-  install       Install/update OpenCode Web and enable it (default)
-  status        Show service status, URL and credentials
-  logs          Follow the service logs
+  install       Install or update OpenCode Web (interactive by default)
+  update        Download the latest openweb and reapply the installation
+  features      List, enable or disable UI features (interactive without arguments)
+  status        Show service state, mode, URL and credentials
+  logs          Follow the OpenCode service logs
   password      Change the web password and restart the service
   uninstall     Stop, disable and remove OpenCode Web
   version       Print the script version
@@ -90,20 +132,41 @@ ${C_BOLD}Options${C_RESET}
   -u, --user <name>         Linux user that runs the service (default: root)
   -U, --username <name>     Web login username (default: opencode)
       --password <value>    Web login password (prompted if omitted)
+      --original            Serve the unmodified OpenCode web UI
+      --modified            Serve the modified UI (requires nginx)
+      --features <list>     Comma-separated features for the modified UI
+                            (use "all" or "none")
+      --reuse               Reuse the current configuration and password
   -y, --yes                 Do not ask for confirmation
       --no-color            Disable colored output
   -h, --help                Show this help
   -V, --version             Print the script version
 
+${C_BOLD}Features${C_RESET}
+  usage       Tokens and session cost above the composer
+  reasoning   Show/hide reasoning summaries
+  theme       Day / night theme toggle
+  history     Session history (including CLI) with delete
+  rtl         RTL / bidi composer input
+  enter       Enter inserts a newline, Ctrl+Enter sends
+  settings    Settings shortcut in the toolbar
+  refresh     Reload-page button in the toolbar
+
 ${C_BOLD}Environment${C_RESET}
-  OPENWEB_PASSWORD          Non-interactive password (the prompt is preferred)
+  OPENWEB_PASSWORD          Non-interactive password (prefer the prompt)
+  OPENWEB_UI                original | modified
+  OPENWEB_FEATURES          Comma-separated feature list
+  OPENWEB_REUSE=1           Reuse the current configuration
 
 ${C_BOLD}Examples${C_RESET}
   sudo openweb
-  sudo openweb install --port 8080 --username admin
+  sudo openweb install --modified --features usage,reasoning,theme
+  sudo openweb install --original --port 8080
+  sudo openweb features
+  sudo openweb features enable history,rtl
+  sudo openweb features disable usage
+  sudo openweb update
   sudo openweb status
-  sudo openweb password
-  sudo openweb uninstall
 
 Repository: ${REPO_URL}
 EOF
@@ -113,21 +176,43 @@ require_root() {
   [[ $EUID -eq 0 ]] || die "run as root (sudo)"
 }
 
+is_interactive() {
+  [[ -r /dev/tty ]] && (( ASSUME_YES == 0 ))
+}
+
+port_valid() {
+  [[ $1 =~ ^[0-9]+$ ]] || return 1
+  (( 10#$1 >= 1 && 10#$1 <= 65535 ))
+}
+
+host_valid() {
+  [[ $1 =~ ^[A-Za-z0-9._:-]+$ ]]
+}
+
+auth_user_valid() {
+  [[ $1 =~ ^[A-Za-z0-9._-]+$ ]]
+}
+
 validate_port() {
-  [[ $LISTEN_PORT =~ ^[0-9]+$ ]] || die "invalid port: $LISTEN_PORT"
-  (( LISTEN_PORT >= 1 && LISTEN_PORT <= 65535 )) || die "port must be between 1 and 65535"
+  port_valid "$LISTEN_PORT" || die "invalid port: $LISTEN_PORT (expected 1-65535)"
 }
 
 validate_settings() {
   validate_port
-  [[ $LISTEN_HOST =~ ^[A-Za-z0-9._:-]+$ ]] || die "invalid hostname: $LISTEN_HOST"
-  [[ $AUTH_USER =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid username: $AUTH_USER"
+  host_valid "$LISTEN_HOST" || die "invalid listen address: $LISTEN_HOST"
+  auth_user_valid "$AUTH_USER" || die "invalid username: $AUTH_USER"
+  [[ $UI_MODE == original || $UI_MODE == modified ]] || die "invalid UI mode: ${UI_MODE:-<empty>} (original|modified)"
   id "$SERVICE_USER" >/dev/null 2>&1 || die "user does not exist: $SERVICE_USER"
 
   SERVICE_GROUP=$(id -gn "$SERVICE_USER")
   SERVICE_HOME=$(getent passwd "$SERVICE_USER" | cut -d: -f6)
   [[ -n $SERVICE_HOME && -d $SERVICE_HOME ]] || die "cannot determine home directory for $SERVICE_USER"
   [[ $SERVICE_HOME != *[[:space:]]* ]] || die "home directory must not contain whitespace: $SERVICE_HOME"
+
+  if [[ -n $UPSTREAM_PORT ]]; then
+    port_valid "$UPSTREAM_PORT" || die "invalid upstream port: $UPSTREAM_PORT"
+    [[ $UPSTREAM_PORT != "$LISTEN_PORT" ]] || die "upstream port and public port must differ"
+  fi
 }
 
 confirm() {
@@ -138,6 +223,13 @@ confirm() {
   printf '%s?%s %s [y/N] ' "$C_YELLOW" "$C_RESET" "$1" >/dev/tty
   IFS= read -r answer < /dev/tty || return 1
   [[ $answer =~ ^[Yy]$ ]]
+}
+
+read_value() {
+  local label=$1 default=$2 answer
+  printf '%s%s%s [%s]: ' "$C_BOLD" "$label" "$C_RESET" "$default" >/dev/tty
+  IFS= read -r answer < /dev/tty || die "failed to read input"
+  REPLY_VALUE=${answer:-$default}
 }
 
 prompt_password() {
@@ -171,6 +263,129 @@ prompt_password() {
 
     PASSWORD=$first
     return 0
+  done
+}
+
+feature_known() {
+  local wanted=$1 key
+  for key in "${FEATURE_KEYS[@]}"; do
+    [[ $key == "$wanted" ]] && return 0
+  done
+  return 1
+}
+
+feature_is_on() {
+  [[ ",${FEATURES// /,}," == *",$1,"* ]]
+}
+
+feature_add() {
+  feature_is_on "$1" && return 0
+  FEATURES="${FEATURES:+${FEATURES},}$1"
+}
+
+features_normalized() {
+  local out="" key
+  for key in "${FEATURE_KEYS[@]}"; do
+    if feature_is_on "$key"; then
+      out="${out:+${out},}${key}"
+    fi
+  done
+  printf '%s' "$out"
+}
+
+set_features() {
+  local raw=$1 token key
+  local -a tokens=()
+  FEATURES=""
+  IFS=' ,' read -r -a tokens <<< "$raw"
+  for token in "${tokens[@]}"; do
+    token=${token,,}
+    case $token in
+      all)
+        for key in "${FEATURE_KEYS[@]}"; do
+          feature_add "$key"
+        done
+        ;;
+      none) ;;
+      *)
+        feature_known "$token" || die "unknown feature: ${token} (known: ${FEATURE_KEYS[*]})"
+        feature_add "$token"
+        ;;
+    esac
+  done
+  FEATURES=$(features_normalized)
+  FEATURES_SET=1
+}
+
+features_remove() {
+  local target=$1 key out=""
+  local -a keys=()
+  IFS=',' read -r -a keys <<< "$FEATURES"
+  for key in "${keys[@]}"; do
+    [[ $key == "$target" ]] || out="${out:+${out},}${key}"
+  done
+  FEATURES=$out
+  FEATURES_SET=1
+}
+
+features_menu() {
+  local -A on=()
+  local key answer token index
+  local -a defaults=()
+  IFS=',' read -r -a defaults <<< "$FEATURES"
+  for key in "${defaults[@]}"; do
+    if feature_known "$key"; then
+      on[$key]=1
+    fi
+  done
+
+  while true; do
+    printf '\n%sModified UI features%s\n' "$C_BOLD" "$C_RESET" >/dev/tty
+    for index in "${!FEATURE_KEYS[@]}"; do
+      key=${FEATURE_KEYS[$index]}
+      printf '  %d) %-42s [%s]\n' "$((index + 1))" "${FEATURE_LABELS[$index]}" \
+        "$([[ ${on[$key]:-0} == 1 ]] && printf 'x' || printf ' ')" >/dev/tty
+    done
+    printf 'Toggle by number (e.g. "1 3"), "a"=all, "n"=none, Enter=done: ' >/dev/tty
+    IFS= read -r answer < /dev/tty || die "failed to read features"
+    case $answer in
+      '') break ;;
+      a | A | all)
+        for key in "${FEATURE_KEYS[@]}"; do on[$key]=1; done
+        ;;
+      n | N | none)
+        for key in "${FEATURE_KEYS[@]}"; do on[$key]=0; done
+        ;;
+      *)
+        for token in $answer; do
+          if [[ $token =~ ^[0-9]+$ ]] && (( token >= 1 && token <= ${#FEATURE_KEYS[@]} )); then
+            key=${FEATURE_KEYS[$((token - 1))]}
+            if [[ ${on[$key]:-0} == 1 ]]; then on[$key]=0; else on[$key]=1; fi
+          else
+            warn "invalid selection: ${token}"
+          fi
+        done
+        ;;
+    esac
+  done
+
+  FEATURES=""
+  for key in "${FEATURE_KEYS[@]}"; do
+    if [[ ${on[$key]:-0} == 1 ]]; then
+      feature_add "$key"
+    fi
+  done
+  FEATURES_SET=1
+}
+
+
+features_list() {
+  local index key state
+  printf '%sUI mode%s : %s\n' "$C_BOLD" "$C_RESET" "$UI_MODE"
+  for index in "${!FEATURE_KEYS[@]}"; do
+    key=${FEATURE_KEYS[$index]}
+    if feature_is_on "$key"; then state="${C_GREEN}on${C_RESET}"; else state="${C_DIM}off${C_RESET}"; fi
+    printf '  %-10s %-4b %s\n' "$key" "$state" "${FEATURE_LABELS[$index]}"
   done
 }
 
@@ -217,11 +432,77 @@ install_opencode() {
   fi
 }
 
-check_port_free() {
+port_free() {
+  local port=$1
   have ss || return 0
-  if ss -ltn 2>/dev/null | awk 'NR > 1 { print $4 }' | grep -qE "[:.]${LISTEN_PORT}$"; then
-    die "port ${LISTEN_PORT} is already in use"
+  ! ss -ltn 2>/dev/null | awk 'NR > 1 { print $4 }' | grep -qE "[:.]${port}$"
+}
+
+find_free_port() {
+  local port=$1
+  have ss || { printf '%s' "$port"; return 0; }
+  while (( port <= 65535 )); do
+    if port_free "$port"; then
+      printf '%s' "$port"
+      return 0
+    fi
+    port=$((port + 1))
+  done
+  die "no free port found"
+}
+
+check_port_free() {
+  local attempt
+  for ((attempt = 1; attempt <= 20; attempt++)); do
+    if port_free "$LISTEN_PORT"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  die "port ${LISTEN_PORT} is already in use"
+}
+
+download_ui_base() {
+  need curl
+  mkdir -p "$RUNNER_DIR"
+  local tmp="${UI_BASE_FILE}.tmp"
+  if ! curl -fsSL --retry 3 "$UI_URL" -o "$tmp"; then
+    rm -f "$tmp"
+    return 1
   fi
+  if (( $(wc -c < "$tmp") < 2000 )); then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$UI_BASE_FILE"
+  chmod 0644 "$UI_BASE_FILE"
+}
+
+write_ui() {
+  if [[ ! -f $UI_BASE_FILE ]]; then
+    info "downloading the modified UI helper"
+    download_ui_base || die "failed to download ${UI_URL}"
+  fi
+
+  local tmp="${UI_FILE}.tmp" key first=1 separator=""
+  {
+    printf 'window.__OPENWEB_FEATURES__ = {'
+    for key in "${FEATURE_KEYS[@]}"; do
+      if feature_is_on "$key"; then
+        printf '%s"%s": true' "$separator" "$key"
+      else
+        printf '%s"%s": false' "$separator" "$key"
+      fi
+      if (( first )); then
+        first=0
+        separator=", "
+      fi
+    done
+    printf '};\n'
+    cat "$UI_BASE_FILE"
+  } > "$tmp"
+  mv "$tmp" "$UI_FILE"
+  chmod 0644 "$UI_FILE"
 }
 
 write_config() {
@@ -232,20 +513,34 @@ SERVICE_GROUP=${SERVICE_GROUP}
 AUTH_USER=${AUTH_USER}
 LISTEN_HOST=${LISTEN_HOST}
 LISTEN_PORT=${LISTEN_PORT}
+UI_MODE=${UI_MODE}
+FEATURES=${FEATURES}
+UPSTREAM_PORT=${UPSTREAM_PORT}
 OPENCODE_BIN=${OPENCODE_BIN}
+NGINX_INSTALLED_BY_OPENWEB=${NGINX_INSTALLED_BY_OPENWEB}
+INSTALLED_VERSION=${SCRIPT_VERSION}
 INSTALLED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
   chmod 0644 "$CONFIG_FILE"
 }
 
 write_runner() {
+  local host port
+  if [[ $UI_MODE == modified ]]; then
+    host="127.0.0.1"
+    port=$UPSTREAM_PORT
+  else
+    host=$LISTEN_HOST
+    port=$LISTEN_PORT
+  fi
+
   cat > "$RUNNER_FILE" <<EOF
 #!/bin/sh
 set -eu
 OPENCODE_SERVER_USERNAME="${AUTH_USER}"
 OPENCODE_SERVER_PASSWORD="\$(cat "${PASSWORD_FILE}")"
 export OPENCODE_SERVER_USERNAME OPENCODE_SERVER_PASSWORD
-exec "${OPENCODE_BIN}" web --hostname "${LISTEN_HOST}" --port "${LISTEN_PORT}"
+exec "${OPENCODE_BIN}" web --hostname "${host}" --port "${port}"
 EOF
   chmod 0755 "$RUNNER_FILE"
 }
@@ -284,34 +579,140 @@ EOF
   chmod 0644 "$UNIT_FILE"
 }
 
-local_url() {
-  local host=127.0.0.1
+ensure_nginx() {
+  if ! have nginx; then
+    info "nginx is required for the modified UI; installing it"
+    if have apt-get; then
+      apt-get update -qq || die "apt-get update failed"
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx || die "failed to install nginx"
+    elif have dnf; then
+      dnf install -y nginx || die "failed to install nginx"
+    elif have yum; then
+      yum install -y nginx || die "failed to install nginx"
+    else
+      die "nginx is required but no supported package manager was found"
+    fi
+    NGINX_INSTALLED_BY_OPENWEB=1
+  fi
+
+  systemctl enable --now nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1 || true
+  systemctl is-active --quiet nginx || die "nginx failed to start"
+}
+
+write_nginx() {
+  local listen_line
   case $LISTEN_HOST in
-    0.0.0.0 | :: | '*') ;;
-    *) host=$LISTEN_HOST ;;
+    0.0.0.0) listen_line="listen ${LISTEN_PORT};" ;;
+    ::) listen_line="listen [::]:${LISTEN_PORT};" ;;
+    *:*) listen_line="listen [${LISTEN_HOST}]:${LISTEN_PORT};" ;;
+    *) listen_line="listen ${LISTEN_HOST}:${LISTEN_PORT};" ;;
   esac
+
+  cat > "$NGINX_MAP" <<'EOF'
+map $http_upgrade $openweb_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+EOF
+  chmod 0644 "$NGINX_MAP"
+
+  cat > "$NGINX_CONF" <<EOF
+server {
+    ${listen_line}
+    server_name _;
+    client_max_body_size 50m;
+
+    location = /__openweb/ui.js {
+        auth_basic off;
+        alias ${UI_FILE};
+        default_type application/javascript;
+        add_header Cache-Control "no-store";
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${UPSTREAM_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Port \$server_port;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$openweb_connection_upgrade;
+        proxy_set_header Accept-Encoding "";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+
+        sub_filter '</body>' '<script src="/__openweb/ui.js" defer></script></body>';
+        sub_filter_once on;
+    }
+}
+EOF
+  chmod 0644 "$NGINX_CONF"
+}
+
+reload_nginx() {
+  nginx -t 2>&1 || die "nginx configuration test failed"
+  if ! systemctl reload nginx 2>/dev/null; then
+    systemctl restart nginx 2>/dev/null || die "failed to reload nginx"
+  fi
+}
+
+remove_nginx() {
+  local removed=0
+  if [[ -f $NGINX_CONF ]]; then
+    rm -f "$NGINX_CONF"
+    removed=1
+  fi
+  if [[ -f $NGINX_MAP ]]; then
+    rm -f "$NGINX_MAP"
+    removed=1
+  fi
+  if (( removed )) && systemctl is-active --quiet nginx; then
+    if ! nginx -t >/dev/null 2>&1 || ! systemctl reload nginx >/dev/null 2>&1; then
+      warn "nginx could not be reloaded after removing the openweb configuration"
+    fi
+  fi
+}
+
+probe_host() {
+  case $LISTEN_HOST in
+    0.0.0.0) printf '127.0.0.1' ;;
+    ::) printf '::1' ;;
+    *) printf '%s' "$LISTEN_HOST" ;;
+  esac
+}
+
+local_url() {
+  local host
+  host=$(probe_host)
   [[ $host == *:* ]] && host="[$host]"
   printf 'http://%s:%s/' "$host" "$LISTEN_PORT"
 }
 
 public_url() {
-  local host=$LISTEN_HOST
-  case $host in
-    0.0.0.0 | :: | '*')
-      host=$(hostname -I 2>/dev/null | awk '{ print $1 }')
+  local host
+  case $LISTEN_HOST in
+    0.0.0.0)
+      host=$(hostname -I 2>/dev/null | tr ' ' '\n' | awk '/^[0-9.]+$/ { print; exit }')
       [[ -n $host ]] || host=127.0.0.1
       ;;
+    ::)
+      host=$(hostname -I 2>/dev/null | tr ' ' '\n' | awk '/:/ { print; exit }')
+      [[ -n $host ]] || host='::1'
+      ;;
+    *) host=$LISTEN_HOST ;;
   esac
   [[ $host == *:* ]] && host="[$host]"
   printf 'http://%s:%s/' "$host" "$LISTEN_PORT"
 }
 
 health_url() {
-  local host=127.0.0.1
-  case $LISTEN_HOST in
-    0.0.0.0 | :: | '*') ;;
-    *) host=$LISTEN_HOST ;;
-  esac
+  local host
+  host=$(probe_host)
   [[ $host == *:* ]] && host="[$host]"
   printf 'http://%s:%s/' "$host" "$LISTEN_PORT"
 }
@@ -345,11 +746,19 @@ print_summary() {
   printf '  %sUsername%s     %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_YELLOW" "$AUTH_USER" "$C_RESET"
   printf '  %sPassword%s     %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_MAGENTA" "$PASSWORD" "$C_RESET"
   printf '  %sPort%s         %s\n' "$C_BOLD" "$C_RESET" "$LISTEN_PORT"
+  if [[ $UI_MODE == modified ]]; then
+    printf '  %sUI mode%s      %smodified (nginx -> 127.0.0.1:%s)%s\n' "$C_BOLD" "$C_RESET" "$C_BLUE" "$UPSTREAM_PORT" "$C_RESET"
+    printf '  %sFeatures%s     %s\n' "$C_BOLD" "$C_RESET" "$(features_normalized)"
+    [[ -n $FEATURES ]] || printf '                 %snone%s\n' "$C_DIM" "$C_RESET"
+  else
+    printf '  %sUI mode%s      %soriginal (unmodified OpenCode UI)%s\n' "$C_BOLD" "$C_RESET" "$C_BLUE" "$C_RESET"
+  fi
   printf '  %sService%s      %s%s%s\n' "$C_BOLD" "$C_RESET" "$C_BLUE" "$SERVICE_NAME" "$C_RESET"
   printf '  %sConfig%s       %s\n' "$C_BOLD" "$C_RESET" "$CONFIG_DIR"
   printf '\n  %sManage%s\n' "$C_BOLD" "$C_RESET"
   printf '    sudo openweb status\n'
-  printf '    sudo openweb logs\n'
+  printf '    sudo openweb features\n'
+  printf '    sudo openweb update\n'
   printf '    sudo openweb password\n'
   printf '    sudo openweb uninstall\n'
   printf '\n  %sKeep these credentials somewhere safe.%s\n' "$C_YELLOW" "$C_RESET"
@@ -365,58 +774,150 @@ print_summary() {
 install_manager() {
   local source=${BASH_SOURCE[0]:-}
   if [[ -n $source && -f $source ]]; then
-    install -m 0755 "$source" "$MANAGER_BIN"
-  else
-    warn "running from stdin; the 'openweb' command was not installed to ${MANAGER_BIN}"
+    local source_real dest_real=""
+    source_real=$(readlink -f "$source")
+    [[ -e $MANAGER_BIN ]] && dest_real=$(readlink -f "$MANAGER_BIN")
+    if [[ $source_real != "$dest_real" ]]; then
+      install -m 0755 "$source" "$MANAGER_BIN"
+    fi
+    return 0
   fi
+
+  need curl
+  local tmp
+  tmp=$(mktemp)
+  if curl -fsSL --retry 3 "$SCRIPT_URL" -o "$tmp"; then
+    install -m 0755 "$tmp" "$MANAGER_BIN"
+  else
+    warn "could not install the 'openweb' command; download it from ${REPO_URL}"
+  fi
+  rm -f "$tmp"
 }
 
 load_config() {
   [[ -f $CONFIG_FILE ]] || die "OpenCode Web is not installed (missing ${CONFIG_FILE})"
   # shellcheck disable=SC1090
   source "$CONFIG_FILE"
+  : "${UI_MODE:=original}"
+  : "${FEATURES:=}"
+  : "${UPSTREAM_PORT:=}"
+  FEATURES_SET=1
   SERVICE_HOME=$(getent passwd "$SERVICE_USER" | cut -d: -f6)
 }
 
-cmd_install() {
-  require_root
-  need systemctl
-  need curl
-  validate_settings
+config_value() {
+  [[ -f $CONFIG_FILE ]] || return 0
+  sed -n "s/^$1=//p" "$CONFIG_FILE" | head -n 1
+}
 
-  if [[ -f $UNIT_FILE ]]; then
-    if ! confirm "OpenCode Web is already installed. Reinstall/update it?"; then
-      info "aborted"
-      return 0
+interactive_wizard() {
+  local default_mode=2
+  if [[ $UI_MODE == original ]]; then
+    default_mode=1
+  fi
+
+  while true; do
+    read_value "Install mode (1=original, 2=modified)" "$default_mode"
+    case $REPLY_VALUE in
+      1 | original | Original) UI_MODE=original; break ;;
+      2 | modified | Modified) UI_MODE=modified; break ;;
+      *) warn "choose 1 or 2" ;;
+    esac
+  done
+
+  if [[ $UI_MODE == modified ]]; then
+    if (( FEATURES_SET == 0 )); then
+      set_features "$DEFAULT_FEATURES"
     fi
-    systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    features_menu
   fi
 
-  prompt_password
+  while true; do
+    read_value "Listen address" "$LISTEN_HOST"
+    if host_valid "$REPLY_VALUE"; then
+      LISTEN_HOST=$REPLY_VALUE
+      break
+    fi
+    warn "invalid listen address"
+  done
 
-  OPENCODE_BIN=$(find_opencode || true)
-  if [[ -z $OPENCODE_BIN ]]; then
-    install_opencode
+  while true; do
+    read_value "Port" "$LISTEN_PORT"
+    if port_valid "$REPLY_VALUE"; then
+      LISTEN_PORT=$REPLY_VALUE
+      break
+    fi
+    warn "port must be between 1 and 65535"
+  done
+
+  while true; do
+    read_value "Login username" "$AUTH_USER"
+    if auth_user_valid "$REPLY_VALUE"; then
+      AUTH_USER=$REPLY_VALUE
+      break
+    fi
+    warn "username may only contain letters, digits, dot, underscore and dash"
+  done
+
+  printf '\n%sInstall summary%s\n' "$C_BOLD" "$C_RESET"
+  printf '  Mode     : %s\n' "$UI_MODE"
+  printf '  Address  : %s:%s\n' "$LISTEN_HOST" "$LISTEN_PORT"
+  printf '  Username : %s\n' "$AUTH_USER"
+  if [[ $UI_MODE == modified ]]; then
+    printf '  Features : %s\n' "$(features_normalized)"
   fi
-  [[ -x $OPENCODE_BIN ]] || die "OpenCode binary is not executable: $OPENCODE_BIN"
-  case $OPENCODE_BIN in
-    *[\"\$\`\\]* | *$'\n'*) die "unsupported character in OpenCode path: $OPENCODE_BIN" ;;
-  esac
+  printf '\n'
+  confirm "Proceed with these settings?" || {
+    info "aborted"
+    exit 0
+  }
 
-  check_port_free
+}
 
-  info "installing OpenCode Web"
+apply_ui() {
+  local old_listen_port
+  old_listen_port=$(config_value LISTEN_PORT)
+
+  systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+
+  if [[ $UI_MODE == modified ]]; then
+    ensure_nginx
+
+    if [[ -z $UPSTREAM_PORT ]]; then
+      UPSTREAM_PORT=$(find_free_port "$((LISTEN_PORT + 1))")
+    fi
+    if [[ $UPSTREAM_PORT == "$LISTEN_PORT" ]] || ! port_free "$UPSTREAM_PORT"; then
+      UPSTREAM_PORT=$(find_free_port "$((LISTEN_PORT + 1))")
+    fi
+
+    if [[ ! -f $NGINX_CONF ]]; then
+      check_port_free
+    elif [[ -n $old_listen_port ]] && [[ $old_listen_port != "$LISTEN_PORT" ]] && ! port_free "$LISTEN_PORT"; then
+      die "port ${LISTEN_PORT} is already in use"
+    fi
+  else
+    remove_nginx
+    check_port_free
+  fi
+
+  step "writing configuration"
   mkdir -p "$CONFIG_DIR" "$RUNNER_DIR"
   chmod 0755 "$CONFIG_DIR" "$RUNNER_DIR"
 
-  ( umask 077; printf '%s' "$PASSWORD" > "$PASSWORD_FILE" )
-  chown "root:${SERVICE_GROUP}" "$PASSWORD_FILE"
-  chmod 0640 "$PASSWORD_FILE"
+  if [[ $UI_MODE == modified ]]; then
+    step "preparing the modified UI"
+    write_ui
+  fi
 
-  step "writing configuration"
   write_config
   write_runner
   write_unit
+
+  if [[ $UI_MODE == modified ]]; then
+    step "configuring nginx"
+    write_nginx
+    reload_nginx
+  fi
 
   step "enabling the systemd service"
   systemctl daemon-reload
@@ -427,11 +928,209 @@ cmd_install() {
   if ! health_check; then
     error "the service did not become healthy"
     journalctl -u "$SERVICE_NAME" -n 40 --no-pager >&2 || true
+    if [[ $UI_MODE == modified ]]; then
+      printf '%snginx error log:%s\n' "$C_DIM" "$C_RESET" >&2
+      tail -n 20 /var/log/nginx/error.log 2>/dev/null >&2 || true
+    fi
     die "installation failed; check the logs and run 'openweb install' again"
   fi
 
   install_manager
   print_summary
+}
+
+cmd_install() {
+  require_root
+  need systemctl
+  need curl
+
+  local installed=0
+  if [[ -f $CONFIG_FILE ]]; then
+    installed=1
+    load_config
+
+    [[ -n $OPT_PORT ]] && LISTEN_PORT=$OPT_PORT
+    [[ -n $OPT_HOST ]] && LISTEN_HOST=$OPT_HOST
+    [[ -n $OPT_USER ]] && SERVICE_USER=$OPT_USER
+    [[ -n $OPT_AUTH_USER ]] && AUTH_USER=$OPT_AUTH_USER
+    [[ -n $ENV_UI ]] && UI_MODE=$ENV_UI
+    [[ -n $ENV_FEATURES ]] && set_features "$ENV_FEATURES"
+    [[ -n $OPT_UI_MODE ]] && UI_MODE=$OPT_UI_MODE
+    if (( OPT_FEATURES_SET == 1 )); then
+      set_features "$OPT_FEATURES"
+    fi
+
+    if [[ -z $PASSWORD && -f $PASSWORD_FILE ]]; then
+      PASSWORD=$(cat "$PASSWORD_FILE")
+      PASSWORD_REUSED=1
+    fi
+  else
+    [[ -n $OPT_PORT ]] && LISTEN_PORT=$OPT_PORT
+    [[ -n $OPT_HOST ]] && LISTEN_HOST=$OPT_HOST
+    [[ -n $OPT_USER ]] && SERVICE_USER=$OPT_USER
+    [[ -n $OPT_AUTH_USER ]] && AUTH_USER=$OPT_AUTH_USER
+    [[ -n $ENV_UI ]] && UI_MODE=$ENV_UI
+    [[ -n $ENV_FEATURES ]] && set_features "$ENV_FEATURES"
+    [[ -n $OPT_UI_MODE ]] && UI_MODE=$OPT_UI_MODE
+    if (( OPT_FEATURES_SET == 1 )); then
+      set_features "$OPT_FEATURES"
+    fi
+  fi
+
+  if [[ $OPT_UI_MODE == original ]] && (( OPT_FEATURES_SET == 1 )) && [[ -n $FEATURES ]]; then
+    die "cannot combine --original with --features"
+  fi
+
+  if (( installed == 1 )) && (( REUSE == 0 )); then
+    if ! confirm "OpenCode Web is already installed. Reinstall/update it?"; then
+      info "aborted"
+      return 0
+    fi
+  fi
+
+  if (( REUSE == 0 )) && is_interactive; then
+    interactive_wizard
+  fi
+
+  if (( OPT_FEATURES_SET == 1 )) && [[ -z $OPT_UI_MODE ]] && [[ -z $ENV_UI ]]; then
+    if [[ -z $FEATURES ]]; then
+      UI_MODE=original
+    else
+      UI_MODE=modified
+    fi
+  fi
+
+  if [[ -z $UI_MODE ]]; then
+    UI_MODE=original
+  fi
+  if [[ $UI_MODE == modified ]] && (( FEATURES_SET == 0 )); then
+    set_features "$DEFAULT_FEATURES"
+  fi
+
+  validate_settings
+
+  if [[ -z $PASSWORD ]]; then
+    if (( installed == 1 )) && [[ -f $PASSWORD_FILE ]]; then
+      PASSWORD=$(cat "$PASSWORD_FILE")
+      PASSWORD_REUSED=1
+    else
+      prompt_password
+    fi
+  else
+    prompt_password
+  fi
+
+  if (( PASSWORD_REUSED == 1 )); then
+    info "keeping the existing password (change it with 'openweb password')"
+  fi
+
+  OPENCODE_BIN=$(find_opencode || true)
+  if [[ -z $OPENCODE_BIN ]]; then
+    install_opencode
+  fi
+  [[ -x $OPENCODE_BIN ]] || die "OpenCode binary is not executable: $OPENCODE_BIN"
+  case $OPENCODE_BIN in
+    *[\"\$\`\\]* | *$'\n'*) die "unsupported character in OpenCode path: $OPENCODE_BIN" ;;
+  esac
+
+  mkdir -p "$CONFIG_DIR"
+  chmod 0755 "$CONFIG_DIR"
+  ( umask 077; printf '%s' "$PASSWORD" > "$PASSWORD_FILE" )
+  chown "root:${SERVICE_GROUP}" "$PASSWORD_FILE"
+  chmod 0640 "$PASSWORD_FILE"
+
+  apply_ui
+}
+
+cmd_update() {
+  require_root
+  need curl
+
+  info "checking for the latest openweb"
+  local tmp new_version
+  tmp=$(mktemp)
+  if ! curl -fsSL --retry 3 "$SCRIPT_URL" -o "$tmp"; then
+    rm -f "$tmp"
+    die "failed to download ${SCRIPT_URL}"
+  fi
+  if ! bash -n "$tmp"; then
+    rm -f "$tmp"
+    die "the downloaded script failed its syntax check"
+  fi
+  new_version=$(bash "$tmp" --version 2>/dev/null || true)
+  [[ -n $new_version ]] || new_version="unknown"
+
+  if download_ui_base; then
+    step "UI helper updated"
+  else
+    warn "could not refresh the UI helper; the existing copy will be used"
+  fi
+
+  install -m 0755 "$tmp" "$MANAGER_BIN"
+  rm -f "$tmp"
+  info "manager updated to v${new_version}"
+
+  if [[ -f $UNIT_FILE ]]; then
+    info "reapplying the current configuration"
+    "$MANAGER_BIN" install --yes --reuse
+  fi
+}
+
+cmd_features() {
+  require_root
+  load_config
+  [[ -f $UNIT_FILE ]] || die "OpenCode Web is not installed"
+
+  local action=${1:-}
+  case $action in
+    list)
+      features_list
+      return 0
+      ;;
+    enable)
+      shift
+      [[ $# -gt 0 ]] || die "usage: openweb features enable <feature[,feature...]>"
+      set_features "${FEATURES} ${*}"
+      UI_MODE=modified
+      ;;
+    disable)
+      shift
+      [[ $# -gt 0 ]] || die "usage: openweb features disable <feature[,feature...]>"
+      local -a tokens=()
+      IFS=' ,' read -r -a tokens <<< "$*"
+      local token
+      for token in "${tokens[@]}"; do
+        token=${token,,}
+        feature_known "$token" || die "unknown feature: ${token} (known: ${FEATURE_KEYS[*]})"
+        features_remove "$token"
+      done
+      ;;
+    set)
+      shift
+      [[ $# -gt 0 ]] || die "usage: openweb features set <feature[,feature...]|all|none>"
+      set_features "$*"
+      [[ -n $FEATURES ]] && UI_MODE=modified
+      ;;
+    reset)
+      set_features "$DEFAULT_FEATURES"
+      UI_MODE=modified
+      ;;
+    '')
+      is_interactive || die "use 'openweb features list|enable|disable|set' in non-interactive mode"
+      UI_MODE=modified
+      features_menu
+      ;;
+    *)
+      die "unknown features action: ${action} (list|enable|disable|set|reset)"
+      ;;
+  esac
+
+  PASSWORD=$(cat "$PASSWORD_FILE" 2>/dev/null || true)
+  [[ -n $PASSWORD ]] || die "password file is missing; run 'openweb install'"
+
+  validate_settings
+  apply_ui
+  printf '  %sReload the browser tab to apply feature changes.%s\n\n' "$C_DIM" "$C_RESET"
 }
 
 cmd_status() {
@@ -477,6 +1176,11 @@ cmd_password() {
 
 cmd_uninstall() {
   require_root
+  local nginx_flag=0
+  if [[ -f $CONFIG_FILE ]]; then
+    nginx_flag=$(config_value NGINX_INSTALLED_BY_OPENWEB)
+    nginx_flag=${nginx_flag:-0}
+  fi
 
   if ! confirm "Stop and remove OpenCode Web? The OpenCode CLI and session data will be kept."; then
     info "aborted"
@@ -485,6 +1189,7 @@ cmd_uninstall() {
 
   info "removing OpenCode Web"
   systemctl disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+  remove_nginx
   rm -f "$UNIT_FILE"
   systemctl daemon-reload
   rm -rf "$CONFIG_DIR" "$RUNNER_DIR"
@@ -492,41 +1197,75 @@ cmd_uninstall() {
 
   info "OpenCode Web has been removed"
   printf '  %sThe OpenCode CLI and session data were kept.%s\n' "$C_DIM" "$C_RESET"
+  if [[ $nginx_flag == 1 ]]; then
+    printf '  %snginx was installed by openweb and has been left in place.%s\n' "$C_DIM" "$C_RESET"
+  fi
 }
 
 main() {
-  local command="install"
+  local command=""
+  local extras=()
+  local command_set=0
 
   while (($# > 0)); do
     case $1 in
-      install | status | logs | password | uninstall | version | help)
-        command=$1
+      install | update | features | status | logs | password | uninstall | version | help)
+        if (( command_set == 0 )); then
+          command=$1
+          command_set=1
+        else
+          extras+=("$1")
+        fi
         shift
         ;;
       -p | --port)
         [[ $# -ge 2 ]] || die "missing value for $1"
         LISTEN_PORT=$2
+        OPT_PORT=$2
         shift 2
         ;;
       -H | --hostname)
         [[ $# -ge 2 ]] || die "missing value for $1"
         LISTEN_HOST=$2
+        OPT_HOST=$2
         shift 2
         ;;
       -u | --user)
         [[ $# -ge 2 ]] || die "missing value for $1"
         SERVICE_USER=$2
+        OPT_USER=$2
         shift 2
         ;;
       -U | --username)
         [[ $# -ge 2 ]] || die "missing value for $1"
         AUTH_USER=$2
+        OPT_AUTH_USER=$2
         shift 2
         ;;
       --password)
         [[ $# -ge 2 ]] || die "missing value for $1"
         PASSWORD=$2
         shift 2
+        ;;
+      --original)
+        UI_MODE=original
+        OPT_UI_MODE=original
+        shift
+        ;;
+      --modified)
+        UI_MODE=modified
+        OPT_UI_MODE=modified
+        shift
+        ;;
+      --features)
+        [[ $# -ge 2 ]] || die "missing value for $1"
+        OPT_FEATURES=$2
+        OPT_FEATURES_SET=1
+        shift 2
+        ;;
+      --reuse)
+        REUSE=1
+        shift
         ;;
       -y | --yes)
         ASSUME_YES=1
@@ -543,20 +1282,40 @@ main() {
         printf '%s\n' "$SCRIPT_VERSION"
         exit 0
         ;;
+      -*)
+        die "unknown option: $1 (use --help)"
+        ;;
       *)
-        die "unknown option or command: $1 (use --help)"
+        if (( command_set == 0 )); then
+          command=$1
+          command_set=1
+        else
+          extras+=("$1")
+        fi
+        shift
         ;;
     esac
   done
 
+  [[ -n $command ]] || command="install"
+
+  case $command in
+    install | update | status | logs | password | uninstall)
+      ((${#extras[@]} == 0)) || die "unexpected argument for ${command}: ${extras[0]}"
+      ;;
+  esac
+
   case $command in
     install) cmd_install ;;
+    update) cmd_update ;;
+    features) cmd_features "${extras[@]}" ;;
     status) cmd_status ;;
     logs) cmd_logs ;;
     password) cmd_password ;;
     uninstall) cmd_uninstall ;;
     version) printf '%s\n' "$SCRIPT_VERSION" ;;
     help) usage ;;
+    *) die "unknown command: ${command} (use --help)" ;;
   esac
 }
 
