@@ -21,6 +21,7 @@ v2 shares sessions with the v2 CLI server; the custom helpers are v1-only.
 - Feature manager with numbered toggles (`openweb features 1 3 5`)
 - Quick enable/disable by number (`openweb on 2 4`, `openweb off 1`)
 - `update`, `status`, `logs`, `password` and `uninstall` commands
+- Optional agent skill packs: **agent-skills** and **graphify**
 - Passwords are prompted twice (minimum 8 characters)
 - Health checks before reporting success
 
@@ -228,6 +229,28 @@ sudo openweb features list
 
 Reload the browser tab after changing features.
 
+## Optional agent skills
+
+```bash
+sudo openweb addons status
+sudo openweb addons install              # both packs
+sudo openweb addons install agent-skills
+sudo openweb addons install graphify
+```
+
+- **agent-skills** ([addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)):
+  25 engineering workflow skills plus shared references, installed globally in
+  `~/.config/opencode/skills/` and `~/.config/opencode/references/`.
+- **graphify** ([Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify)):
+  installs `uv` when needed, the `graphifyy` CLI, the OpenCode skill + plugin,
+  and links `graphify` into `/usr/local/bin`.
+
+Start a new OpenCode session after installing. Code parsing in graphify is
+local; docs/PDF/image ingestion may use a configured model or API key.
+
+Requirements: network access, `curl`, `python3`; `uv` (and Python 3.12) are
+installed automatically by the graphify add-on.
+
 ## Control panel
 
 Run `sudo openweb` with no command to get the numbered panel:
@@ -253,6 +276,7 @@ Run `sudo openweb` with no command to get the numbered panel:
 | `sudo openweb` | Numbered control panel |
 | `sudo openweb install [options]` | Install, reinstall or change settings |
 | `sudo openweb update` | Fetch the latest openweb and reapply the current setup |
+| `sudo openweb addons ...` | Install optional agent skills (agent-skills, graphify) |
 | `sudo openweb features ...` | Numbered feature manager / direct toggles |
 | `sudo openweb on <numbers>` | Quick-enable features |
 | `sudo openweb off <numbers>` | Quick-disable features |
@@ -371,7 +395,8 @@ the managed HTTPS configuration. To keep the custom v1 UI instead, use
 
 - Linux with systemd
 - root access
-- `bash`, `curl`, `openssl`
+- `bash`, `curl`, `openssl`, `python3`
+- `uv` is installed automatically for the graphify add-on
 - nginx for modified mode or HTTPS (installed automatically on Debian/Ubuntu/RHEL)
 - certbot for Let's Encrypt (installed automatically)
 - ports 80 and 443 reachable for Let's Encrypt

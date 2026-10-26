@@ -22,6 +22,7 @@ Let's Encrypt فعال کند، سرویس را در بوت فعال می‌کن
 - مدیر فیچر با انتخاب شماره‌ای (`openweb features 1 3 5`)
 - فعال/غیرفعال سریع با شماره (`openweb on 2 4`، `openweb off 1`)
 - دستورهای `update`، `status`، `logs`، `password` و `uninstall`
+- پکیج‌های اختیاری اسکیل: **agent-skills** و **graphify**
 - پرسیدن دو باره رمز (حداقل ۸ کاراکتر)
 - بررسی سلامت سرویس قبل از اعلام موفقیت
 
@@ -228,6 +229,28 @@ sudo openweb features list
 
 بعد از تغییر فیچرها تب مرورگر را دوباره بارگذاری کنید.
 
+## اسکیل‌های اختیاری agent
+
+```bash
+sudo openweb addons status
+sudo openweb addons install              # هر دو
+sudo openweb addons install agent-skills
+sudo openweb addons install graphify
+```
+
+- **agent-skills** ([addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)):
+  ۲۵ اسکیل گردش‌کار مهندسی + فایل‌های مرجع مشترک، به‌صورت گلوبال در
+  `~/.config/opencode/skills/` و `~/.config/opencode/references/`.
+- **graphify** ([Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify)):
+  نصب `uv` در صورت نیاز، CLI `graphifyy`، اسکیل و پلاگین OpenCode و لینک
+  `graphify` در `/usr/local/bin`.
+
+بعد از نصب یک سشن جدید OpenCode باز کن. پارس کد در graphify لوکال است؛
+پردازش docs/PDF/تصویر ممکن است به مدل یا API key نیاز داشته باشد.
+
+پیش‌نیازها: دسترسی شبکه، `curl`، `python3`؛ `uv` و Python 3.12 خودکار توسط
+افزونهٔ graphify نصب می‌شوند.
+
 ## پنل کنترل
 
 با اجرای `sudo openweb` بدون دستور، پنل شماره‌دار باز می‌شود:
@@ -253,6 +276,7 @@ sudo openweb features list
 | `sudo openweb` | پنل کنترل شماره‌دار |
 | `sudo openweb install [options]` | نصب، نصب مجدد یا تغییر تنظیمات |
 | `sudo openweb update` | دریافت آخرین openweb و اعمال مجدد تنظیمات فعلی |
+| `sudo openweb addons ...` | نصب اسکیل‌های اختیاری agent (agent-skills، graphify) |
 | `sudo openweb features ...` | مدیر فیچر شماره‌دار / تغییر مستقیم |
 | `sudo openweb on <numbers>` | فعال‌سازی سریع فیچرها |
 | `sudo openweb off <numbers>` | غیرفعال‌سازی سریع فیچرها |
@@ -370,7 +394,8 @@ sudo /tmp/openweb install --reuse --domain <your-domain>.nip.io --tls letsencryp
 
 - لینوکس با systemd
 - دسترسی root
-- `bash`، `curl`، `openssl`
+- `bash`، `curl`، `openssl`، `python3`
+- `uv` برای افزونهٔ graphify خودکار نصب می‌شود
 - nginx برای حالت ویرایش‌شده یا HTTPS (نصب خودکار روی Debian/Ubuntu/RHEL)
 - certbot برای Let's Encrypt (نصب خودکار)
 - دسترسی بیرونی به پورت‌های 80 و 443 برای Let's Encrypt
