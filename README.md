@@ -41,7 +41,7 @@ sudo openweb install --web v1 --modified
 
 | Mode | UI | Session sync | Custom helpers |
 | --- | --- | --- | --- |
-| `--web v2` | native OpenCode v2 | with the v2 CLI server | disabled (v2 has native progress/session list) |
+| `--web v2` | native OpenCode v2 | with the v2 CLI server | v2 quick toolbar (reasoning/theme/history/settings/refresh); native progress/session list |
 | `--web v1` | v1.19.4 + custom | with a v1 CLI | usage, reasoning, theme, history, RTL, ... |
 
 The interactive wizard asks for the web engine; the current installation uses
@@ -94,7 +94,8 @@ sudo openweb install --web v2
 ```
 
 v2 includes its own progress indicator, session list, themes and language
-support. The custom v1 helpers are disabled in this mode.
+support, and openweb injects a quick toolbar into the v2 titlebar
+(reasoning/theme/history/settings/refresh). The v1 feature toggles are disabled.
 
 ### v1 original UI
 
@@ -155,8 +156,21 @@ HTTPS. Use `--hostname 127.0.0.1` to keep it local only.
 ## Features (v1 modified UI only)
 
 These toggles are for `--web v1 --modified`. The v2 native UI has its own
-progress indicator, session list, theme and language support; `openweb
-features` explains this when v2 is active.
+progress indicator, session list, theme and language support, plus a v2 quick
+toolbar; `openweb features` explains this when v2 is active.
+
+### v2 quick toolbar
+
+In `--web v2`, openweb injects a small toolbar into the OpenCode v2 titlebar:
+
+- reasoning/thinking visibility (v2 timeline detail)
+- day / night theme
+- session history (including CLI sessions) with open/navigate
+- settings
+- reload
+
+It reuses the v2 server password already stored by the browser. No extra
+credentials are required.
 
 | # | Name | What it does |
 | --- | --- | --- |

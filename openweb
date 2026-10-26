@@ -6,10 +6,11 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.2.0"
+readonly SCRIPT_VERSION="2.3.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
+readonly UI_V2_URL="${OPENWEB_UI_V2_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui-v2.js}"
 readonly SERVICE_NAME="openweb"
 readonly UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 readonly CONFIG_DIR="/etc/openweb"
@@ -18,6 +19,7 @@ readonly PASSWORD_FILE="${CONFIG_DIR}/password"
 readonly RUNNER_DIR="/usr/local/lib/openweb"
 readonly RUNNER_FILE="${RUNNER_DIR}/run"
 readonly UI_BASE_FILE="${RUNNER_DIR}/ui-base.js"
+readonly UI_V2_BASE_FILE="${RUNNER_DIR}/ui-v2-base.js"
 readonly UI_FILE="${RUNNER_DIR}/ui.js"
 readonly MANAGER_BIN="/usr/local/bin/openweb"
 readonly COMPAT_OPENCODE_VERSION="${OPENWEB_OPENCODE_VERSION:-1.19.4}"
@@ -222,7 +224,7 @@ ${C_BOLD}Options${C_RESET}
   -U, --username <name>     Web login username (default: opencode)
       --password <value>    Web login password (prompted if omitted)
       --web <v1|v2>         Web engine: v1.19.4 + custom UI, or v2 native
-                            (v2 shares sessions with the v2 CLI server)
+                            (v2 adds a quick toolbar and shares sessions with the CLI)
       --original            Serve the unmodified OpenCode web UI
       --modified            Serve the modified v1 UI (requires nginx)
       --features <list>     Comma-separated v1 features (use "all" or "none")
@@ -881,11 +883,12 @@ resolve_ports() {
   fi
 }
 
-download_ui_base() {
+download_one_ui_base() {
   need curl
+  local url=$1 dest=$2 tmp
   mkdir -p "$RUNNER_DIR"
-  local tmp="${UI_BASE_FILE}.tmp"
-  if ! curl -fsSL --retry 3 "$UI_URL" -o "$tmp"; then
+  tmp="${dest}.tmp"
+  if ! curl -fsSL --retry 3 "$url" -o "$tmp"; then
     rm -f "$tmp"
     return 1
   fi
@@ -893,29 +896,61 @@ download_ui_base() {
     rm -f "$tmp"
     return 1
   fi
-  mv "$tmp" "$UI_BASE_FILE"
-  chmod 0644 "$UI_BASE_FILE"
+  mv "$tmp" "$dest"
+  chmod 0644 "$dest"
+}
+
+download_ui_base() {
+  local ok=1
+  download_one_ui_base "$UI_URL" "$UI_BASE_FILE" || ok=0
+  download_one_ui_base "$UI_V2_URL" "$UI_V2_BASE_FILE" || ok=0
+  (( ok ))
 }
 
 ensure_ui_base() {
-  [[ $UI_MODE == modified ]] || return 0
-  if download_ui_base; then
+  local url dest
+  if web_v2; then
+    url=$UI_V2_URL
+    dest=$UI_V2_BASE_FILE
+  elif [[ $UI_MODE == modified ]]; then
+    url=$UI_URL
+    dest=$UI_BASE_FILE
+  else
     return 0
   fi
-  if [[ -f $UI_BASE_FILE ]]; then
+
+  if download_one_ui_base "$url" "$dest"; then
+    return 0
+  fi
+  if [[ -f $dest ]]; then
     warn "could not refresh the UI helper; using the installed copy"
     return 0
   fi
-  die "failed to download the UI helper from ${UI_URL}"
+  die "failed to download the UI helper from ${url}"
 }
 
 write_ui() {
-  if [[ ! -f $UI_BASE_FILE ]]; then
-    info "downloading the modified UI helper"
-    download_ui_base || die "failed to download ${UI_URL}"
+  local tmp="${UI_FILE}.tmp" key first=1 separator=""
+
+  if web_v2; then
+    if [[ ! -f $UI_V2_BASE_FILE ]]; then
+      info "downloading the v2 quick toolbar helper"
+      download_one_ui_base "$UI_V2_URL" "$UI_V2_BASE_FILE" || die "failed to download ${UI_V2_URL}"
+    fi
+    {
+      printf 'window.__OPENWEB_V2__ = { "toolbar": true };\n'
+      cat "$UI_V2_BASE_FILE"
+    } > "$tmp"
+    mv "$tmp" "$UI_FILE"
+    chmod 0644 "$UI_FILE"
+    return 0
   fi
 
-  local tmp="${UI_FILE}.tmp" key first=1 separator=""
+  if [[ ! -f $UI_BASE_FILE ]]; then
+    info "downloading the modified UI helper"
+    download_one_ui_base "$UI_URL" "$UI_BASE_FILE" || die "failed to download ${UI_URL}"
+  fi
+
   {
     printf 'window.__OPENWEB_FEATURES__ = {'
     for key in "${FEATURE_KEYS[@]}"; do
@@ -1217,7 +1252,7 @@ EOF
 
   ui_location=""
   sub_filter_line=""
-  if [[ $UI_MODE == modified ]]; then
+  if [[ $UI_MODE == modified ]] || web_v2; then
     ui_location="    location = /__openweb/ui.js {
         auth_basic off;
         alias ${UI_FILE};
@@ -1571,7 +1606,8 @@ print_summary() {
       printf '  %sUI mode%s      %sv2 native%s\n' "$C_BOLD" "$C_RESET" "$C_BLUE" "$C_RESET"
     fi
     printf '  %sSession sync%s %sshared with the v2 CLI server%s\n' "$C_BOLD" "$C_RESET" "$C_GREEN" "$C_RESET"
-    printf '  %sFeatures%s     %sv2 native (progress and session sync included)%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
+    printf '  %sToolbar%s      %sreasoning, theme, history, settings, refresh%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
+    printf '  %sFeatures%s     %sv2 native + quick toolbar%s\n' "$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
   elif [[ $UI_MODE == modified ]]; then
     printf '  %sUI mode%s      %smodified (nginx -> 127.0.0.1:%s)%s\n' "$C_BOLD" "$C_RESET" "$C_BLUE" "$UPSTREAM_PORT" "$C_RESET"
     printf '  %sFeatures%s     %s\n' "$C_BOLD" "$C_RESET" "$(features_normalized)"
@@ -1894,8 +1930,8 @@ apply_ui() {
   mkdir -p "$CONFIG_DIR" "$RUNNER_DIR"
   chmod 0755 "$CONFIG_DIR" "$RUNNER_DIR"
 
-  if [[ $UI_MODE == modified ]]; then
-    step "preparing the modified UI"
+  if [[ $UI_MODE == modified ]] || web_v2; then
+    step "preparing the UI helper"
     write_ui
   fi
 
@@ -2182,6 +2218,7 @@ cmd_features() {
   if web_v2; then
     info "The v2 native web UI is active."
     info "v2 includes its own progress indicator and shares sessions with the CLI server."
+    info "The quick toolbar (reasoning/theme/history/settings/refresh) is installed in the titlebar."
     info "Custom v1 UI features are disabled. To switch: sudo openweb install --web v1"
     return 0
   fi
