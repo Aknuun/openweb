@@ -164,9 +164,10 @@ sudo openweb install --web v1 --modified --tls http
 
 در `--web v2` یک نوار ابزار کوچک در titlebar رابط v2 تزریق می‌شود:
 
+- پیل مصرف/هزینه (مجموع توکن و دلار؛ کلیک برای تاریخچه)
 - نمایش/پنهان‌کردن استدلال/تفکر (تنظیم Timeline detail در v2)
 - تم روشن/تاریک
-- تاریخچهٔ سشن‌ها (شامل CLI) با باز کردن سشن
+- تاریخچهٔ سشن‌ها (شامل CLI) با مجموع، باز کردن سشن
 - تنظیمات
 - بارگذاری مجدد صفحه
 
@@ -229,13 +230,15 @@ sudo openweb features list
 
 بعد از تغییر فیچرها تب مرورگر را دوباره بارگذاری کنید.
 
-## اسکیل‌های اختیاری agent
+## افزونه‌های اختیاری agent
 
 ```bash
 sudo openweb addons status
-sudo openweb addons install              # هر دو
+sudo openweb addons install              # هر چهار مورد (شامل memory)
 sudo openweb addons install agent-skills
 sudo openweb addons install graphify
+sudo openweb addons install context-pruning
+sudo openweb addons install memory
 ```
 
 - **agent-skills** ([addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)):
@@ -244,12 +247,25 @@ sudo openweb addons install graphify
 - **graphify** ([Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify)):
   نصب `uv` در صورت نیاز، CLI `graphifyy`، اسکیل و پلاگین OpenCode و لینک
   `graphify` در `/usr/local/bin`.
+- **context-pruning** ([opencode-dynamic-context-pruning](https://github.com/Tarquinen/opencode-dynamic-context-pruning)):
+  نصب `@tarquinen/opencode-dcp`؛ فشرده‌سازی/حذف context قدیمی و prune کردن
+  ورودی toolهای خطادار. کانفیگ: `~/.config/opencode/dcp.jsonc`.
+- **memory** ([opencode-mem](https://github.com/tickernelz/opencode-mem)):
+  نصب `opencode-mem`؛ حافظهٔ برداری محلی Turso با وب‌یوآی روی
+  `http://127.0.0.1:4747`. اولین استفاده مدل embedding محلی را دانلود می‌کند
+  (چند صد مگابایت تا ~۲ گیگ) و auto-capture به مدل تنظیم‌شده نیاز دارد.
+
+پلاگین‌های context-pruning و memory مخصوص OpenCode v2 هستند. بعد از نصب
+سرویس OpenCode را ری‌استارت کن تا سرور پلاگین‌ها را لود کند.
+`openweb addons install` بدون آرگومان هر چهار مورد را نصب می‌کند؛ اگر مدل
+memory را نمی‌خواهی از targetهای جداگانه استفاده کن.
 
 بعد از نصب یک سشن جدید OpenCode باز کن. پارس کد در graphify لوکال است؛
 پردازش docs/PDF/تصویر ممکن است به مدل یا API key نیاز داشته باشد.
 
 پیش‌نیازها: دسترسی شبکه، `curl`، `python3`؛ `uv` و Python 3.12 خودکار توسط
-افزونهٔ graphify نصب می‌شوند.
+افزونهٔ graphify نصب می‌شوند. افزونهٔ memory هنگام embed محلی حدود ۰.۵ تا ۲
+گیگابایت RAM مصرف می‌کند.
 
 ## پنل کنترل
 

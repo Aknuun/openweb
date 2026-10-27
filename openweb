@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.4.0"
+readonly SCRIPT_VERSION="2.5.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -24,6 +24,8 @@ readonly UI_FILE="${RUNNER_DIR}/ui.js"
 readonly MANAGER_BIN="/usr/local/bin/openweb"
 readonly AGENT_SKILLS_TARBALL="https://github.com/addyosmani/agent-skills/archive/refs/heads/main.tar.gz"
 readonly GRAPHIFY_PACKAGE="graphifyy"
+readonly DCP_PLUGIN_PACKAGE="@tarquinen/opencode-dcp@latest"
+readonly MEM_PLUGIN_PACKAGE="opencode-mem@latest"
 readonly COMPAT_OPENCODE_VERSION="${OPENWEB_OPENCODE_VERSION:-1.19.4}"
 readonly PINNED_OPENCODE="${RUNNER_DIR}/opencode"
 readonly V2_OPENCODE="${RUNNER_DIR}/opencode-v2"
@@ -211,7 +213,7 @@ ${C_BOLD}Commands${C_RESET}
   install       Install or update OpenCode Web (interactive by default)
   update        Download the latest openweb and reapply the installation
   features      List, enable or disable UI features (interactive without arguments)
-  addons        Install optional agent skills (agent-skills, graphify)
+  addons        Install optional agent add-ons (skills, graphify, pruning, memory)
   on / off      Quick enable/disable features by number or name
   status        Show service state, mode, URL and credentials
   logs          Follow the OpenCode and nginx logs
@@ -2407,11 +2409,32 @@ install_graphify() {
   info "${version} installed"
 }
 
+install_opencode_plugin() {
+  local package=$1 label=$2 cli
+  cli=$(find_system_opencode || true)
+  [[ -n $cli ]] || die "OpenCode v2 CLI not found"
+  info "installing ${label} plugin"
+  ( cd "$SERVICE_HOME" && run_as_service_user "$cli" plugin add "$package" ) >&2 \
+    || die "failed to install ${package}"
+}
+
+install_context_pruning() {
+  install_opencode_plugin "$DCP_PLUGIN_PACKAGE" "dynamic context pruning"
+}
+
+install_memory() {
+  install_opencode_plugin "$MEM_PLUGIN_PACKAGE" "opencode-mem"
+}
+
 addons_status() {
   local skills_dir="$SERVICE_HOME/.config/opencode/skills"
   local agent_state="${C_DIM}off${C_RESET}"
   local graph_state="${C_DIM}off${C_RESET}"
+  local dcp_state="${C_DIM}off${C_RESET}"
+  local mem_state="${C_DIM}off${C_RESET}"
   local count=0
+  local config_file="$SERVICE_HOME/.config/opencode/opencode.jsonc"
+  [[ -f $config_file ]] || config_file="$SERVICE_HOME/.config/opencode/opencode.json"
 
   if [[ -f "$skills_dir/using-agent-skills/SKILL.md" ]]; then
     count=$(find "$skills_dir" -mindepth 1 -maxdepth 1 -type d ! -name graphify | wc -l)
@@ -2422,10 +2445,18 @@ addons_status() {
     && [[ -x /usr/local/bin/graphify || -x "$SERVICE_HOME/.local/bin/graphify" ]]; then
     graph_state="${C_GREEN}on${C_RESET}"
   fi
+  if [[ -f $config_file ]] && grep -q 'opencode-dcp' "$config_file" 2>/dev/null; then
+    dcp_state="${C_GREEN}on${C_RESET}"
+  fi
+  if [[ -f $config_file ]] && grep -q 'opencode-mem' "$config_file" 2>/dev/null; then
+    mem_state="${C_GREEN}on${C_RESET}"
+  fi
 
   printf '%sOptional agent skills%s\n' "$C_BOLD" "$C_RESET"
   printf '  %sagent-skills%s  %b\n' "$C_BOLD" "$C_RESET" "$agent_state"
   printf '  %sgraphify%s      %b\n' "$C_BOLD" "$C_RESET" "$graph_state"
+  printf '  %scontext-pruning%s %b\n' "$C_BOLD" "$C_RESET" "$dcp_state"
+  printf '  %smemory%s        %b\n' "$C_BOLD" "$C_RESET" "$mem_state"
   printf '  %sskills dir%s    %s\n' "$C_BOLD" "$C_RESET" "$skills_dir"
 }
 
@@ -2452,6 +2483,8 @@ cmd_addons() {
           all)
             install_agent_skills
             install_graphify
+            install_context_pruning
+            install_memory
             ;;
           agent-skills | skills)
             install_agent_skills
@@ -2459,15 +2492,21 @@ cmd_addons() {
           graphify)
             install_graphify
             ;;
+          context-pruning | dcp | pruning)
+            install_context_pruning
+            ;;
+          memory | mem)
+            install_memory
+            ;;
           *)
-            die "unknown add-on: ${target} (agent-skills|graphify|all)"
+            die "unknown add-on: ${target} (agent-skills|graphify|context-pruning|memory|all)"
             ;;
         esac
       done
       info "add-ons installed. Start a new OpenCode session to load new skills/plugins."
       ;;
     *)
-      die "usage: openweb addons [status|install [agent-skills|graphify|all]]"
+      die "usage: openweb addons [status|install [agent-skills|graphify|context-pruning|memory|all]]"
       ;;
   esac
 }
@@ -2581,7 +2620,7 @@ main_menu() {
       printf '  %s5)%s Update\n' "$C_BOLD" "$C_RESET" >/dev/tty
       printf '  %s6)%s Logs\n' "$C_BOLD" "$C_RESET" >/dev/tty
       printf '  %s7)%s Uninstall\n' "$C_BOLD" "$C_RESET" >/dev/tty
-      printf '  %s8)%s Agent skills (agent-skills + graphify)\n' "$C_BOLD" "$C_RESET" >/dev/tty
+      printf '  %s8)%s Agent add-ons (skills, graphify, memory)\n' "$C_BOLD" "$C_RESET" >/dev/tty
     else
       printf '  %s2)%s Help\n' "$C_BOLD" "$C_RESET" >/dev/tty
     fi

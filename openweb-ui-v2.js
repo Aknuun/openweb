@@ -66,6 +66,42 @@
       stroke-linecap: round;
       stroke-linejoin: round;
     }
+    .openweb-v2-usage {
+      display: none;
+      align-items: center;
+      height: 22px;
+      padding: 0 6px;
+      margin-inline-start: 4px;
+      border: 0;
+      border-radius: 6px;
+      background: rgba(127, 127, 127, 0.1);
+      color: inherit;
+      opacity: 0.78;
+      font: inherit;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .openweb-v2-usage:hover {
+      background: rgba(127, 127, 127, 0.18);
+      opacity: 1;
+    }
+    .openweb-v2-usage:focus-visible {
+      outline: 2px solid currentColor;
+      outline-offset: 1px;
+      opacity: 1;
+    }
+    @media (max-width: 640px) {
+      .openweb-v2-usage { display: none !important; }
+    }
+    .openweb-v2-history-total {
+      padding: 7px 12px;
+      border-bottom: 1px solid rgba(127, 127, 127, 0.2);
+      font-size: 11px;
+      opacity: 0.78;
+      font-variant-numeric: tabular-nums;
+    }
     .openweb-v2-history-backdrop {
       position: fixed;
       inset: 0;
@@ -366,6 +402,78 @@
     return "$" + cost.toFixed(4);
   }
 
+  function formatCostShort(value) {
+    const cost = Number(value) || 0;
+    return "$" + cost.toFixed(2);
+  }
+
+  function formatTokens(value) {
+    const num = Number(value) || 0;
+    if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
+    if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+    return String(num);
+  }
+
+  function currentSessionId() {
+    const match = /\/session\/([^/?#]+)\/?$/.exec(location.pathname);
+    if (!match) return "";
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+
+  function sessionTokens(session) {
+    const tokens = (session && session.tokens) || {};
+    return (Number(tokens.input) || 0) + (Number(tokens.output) || 0) + (Number(tokens.reasoning) || 0);
+  }
+
+  function renderUsagePill(list) {
+    const pill = document.querySelector("[data-openweb-v2-usage]");
+    if (!pill) return;
+    if (!Array.isArray(list) || list.length === 0) {
+      pill.style.display = "none";
+      return;
+    }
+
+    let totalTokens = 0;
+    let totalCost = 0;
+    for (const session of list) {
+      totalTokens += sessionTokens(session);
+      totalCost += Number(session.cost) || 0;
+    }
+
+    const id = currentSessionId();
+    const current = id ? list.find((session) => session.id === id) : null;
+    pill.style.display = "inline-flex";
+    pill.textContent = "Σ " + formatTokens(totalTokens) + " · " + formatCostShort(totalCost);
+    pill.title = current
+      ? "این سشن: " + formatTokens(sessionTokens(current)) + " · " + formatCost(current.cost) +
+        " / مجموع: " + formatTokens(totalTokens) + " · " + formatCostShort(totalCost)
+      : "مجموع همه سشن‌ها: " + formatTokens(totalTokens) + " · " + formatCostShort(totalCost);
+  }
+
+  let usageAt = 0;
+
+  function refreshUsage() {
+    const server = serverInfo();
+    if (!server.password) return;
+    const now = Date.now();
+    if (now - usageAt < 20000) return;
+    usageAt = now;
+    fetch(server.url + "/api/session", {
+      headers: { Accept: "application/json", Authorization: authHeader() },
+      credentials: "same-origin",
+      cache: "no-store",
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (data) renderUsagePill(Array.isArray(data) ? data : data.data || []);
+      })
+      .catch(() => {});
+  }
+
   function renderHistory(list) {
     closeHistory();
     const backdrop = document.createElement("div");
@@ -425,7 +533,17 @@
         });
     }
 
-    panel.append(head, body);
+    let totalTokens = 0;
+    let totalCost = 0;
+    for (const session of Array.isArray(list) ? list : []) {
+      totalTokens += sessionTokens(session);
+      totalCost += Number(session.cost) || 0;
+    }
+    const totals = document.createElement("div");
+    totals.className = "openweb-v2-history-total";
+    totals.textContent = "مجموع: " + formatTokens(totalTokens) + " توکن · " + formatCostShort(totalCost);
+
+    panel.append(head, totals, body);
     backdrop.appendChild(panel);
     backdrop.addEventListener("click", (event) => {
       if (event.target === backdrop) closeHistory();
@@ -449,7 +567,11 @@
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.json();
       })
-      .then((data) => renderHistory(Array.isArray(data) ? data : data.data || []))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : data.data || [];
+        renderUsagePill(list);
+        renderHistory(list);
+      })
       .catch(() => window.alert("خطا در خواندن سشن‌ها"));
   }
 
@@ -475,6 +597,13 @@
     bar.className = "openweb-v2-toolbar";
     bar.dataset.openwebV2Toolbar = "";
     bar.dir = "ltr";
+    const usage = document.createElement("button");
+    usage.type = "button";
+    usage.className = "openweb-v2-usage";
+    usage.dataset.openwebV2Usage = "";
+    usage.title = "مصرف و هزینهٔ سشن‌ها";
+    usage.addEventListener("click", openHistory);
+    bar.appendChild(usage);
     bar.append(
       actionButton({
         action: "reasoning",
@@ -503,11 +632,13 @@
   function ensureToolbar() {
     const right = document.getElementById("opencode-titlebar-right");
     if (!right) return;
+    if (!serverInfo().password) return;
     let bar = document.querySelector("[data-openweb-v2-toolbar]");
     if (!bar) bar = buildToolbar();
     if (bar.parentElement !== right) right.appendChild(bar);
     syncTheme();
     syncReasoning();
+    refreshUsage();
   }
 
   new MutationObserver(syncTheme).observe(document.documentElement, {

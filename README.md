@@ -164,9 +164,10 @@ toolbar; `openweb features` explains this when v2 is active.
 
 In `--web v2`, openweb injects a small toolbar into the OpenCode v2 titlebar:
 
+- usage/cost pill (total tokens and USD; click for history)
 - reasoning/thinking visibility (v2 timeline detail)
 - day / night theme
-- session history (including CLI sessions) with open/navigate
+- session history (including CLI sessions) with totals, open and navigate
 - settings
 - reload
 
@@ -229,13 +230,15 @@ sudo openweb features list
 
 Reload the browser tab after changing features.
 
-## Optional agent skills
+## Optional agent add-ons
 
 ```bash
 sudo openweb addons status
-sudo openweb addons install              # both packs
+sudo openweb addons install              # all four (includes memory)
 sudo openweb addons install agent-skills
 sudo openweb addons install graphify
+sudo openweb addons install context-pruning
+sudo openweb addons install memory
 ```
 
 - **agent-skills** ([addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)):
@@ -244,12 +247,25 @@ sudo openweb addons install graphify
 - **graphify** ([Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify)):
   installs `uv` when needed, the `graphifyy` CLI, the OpenCode skill + plugin,
   and links `graphify` into `/usr/local/bin`.
+- **context-pruning** ([opencode-dynamic-context-pruning](https://github.com/Tarquinen/opencode-dynamic-context-pruning)):
+  installs `@tarquinen/opencode-dcp`; compresses/dedupes stale context and
+  prunes errored tool inputs. Config: `~/.config/opencode/dcp.jsonc`.
+- **memory** ([opencode-mem](https://github.com/tickernelz/opencode-mem)):
+  installs `opencode-mem`; local Turso vector memory with a web UI at
+  `http://127.0.0.1:4747`. The first use downloads a local embedding model
+  (hundreds of MB to ~2 GB) and auto-capture needs a configured model.
+
+The context-pruning and memory plugins are OpenCode v2 plugins. Restart the
+OpenCode service after installing them so the server loads the plugins.
+`openweb addons install` with no arguments installs all four; use the
+individual targets if you do not want the memory model.
 
 Start a new OpenCode session after installing. Code parsing in graphify is
 local; docs/PDF/image ingestion may use a configured model or API key.
 
 Requirements: network access, `curl`, `python3`; `uv` (and Python 3.12) are
-installed automatically by the graphify add-on.
+installed automatically by the graphify add-on. The memory add-on uses about
+0.5–2 GB RAM while local embeddings are loaded.
 
 ## Control panel
 
