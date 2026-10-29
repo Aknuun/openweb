@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.7.0"
+readonly SCRIPT_VERSION="2.8.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -135,6 +135,21 @@ OPENCODE_BIN=""
 REPLY_VALUE=""
 
 info() { printf '%s==>%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+progress_bar() {
+  local pct=$1 width=24 filled i bar=""
+  filled=$(( pct * width / 100 ))
+  for ((i = 0; i < width; i++)); do
+    if (( i < filled )); then bar+="█"; else bar+="░"; fi
+  done
+  printf '%s%s%s %s%3d%%%s' "$C_GREEN" "$bar" "$C_RESET" "$C_BOLD" "$pct" "$C_RESET"
+}
+progress() {
+  local pct=$1
+  shift
+  printf '  '
+  progress_bar "$pct"
+  printf ' %s\n' "$*"
+}
 step() { printf '  %s-%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
 warn() { printf '%swarn:%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
 error() { printf '%serror:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
@@ -741,21 +756,47 @@ latest_opencode_version() {
   npm view @opencode/cli version --silent 2>/dev/null | tail -n1
 }
 
+ensure_node_runtime() {
+  local major
+  major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  if (( major >= 18 )) && have npm; then
+    return 0
+  fi
+
+  info "installing Node.js 22 (found: $(node -v 2>/dev/null || echo none)); @opencode/cli needs Node 18+"
+  if have apt-get; then
+    # The distro npm package pins an old Node and blocks the NodeSource package.
+    apt-get remove -y -qq npm >&2 || true
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >&2 \
+      || die "could not add the NodeSource repository"
+    apt-get install -y -qq nodejs >&2 || die "could not install Node.js 22"
+  elif have dnf; then
+    dnf install -y nodejs npm >&2 || die "could not install Node.js"
+  elif have yum; then
+    yum install -y nodejs npm >&2 || die "could not install Node.js"
+  fi
+
+  major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  (( major >= 18 )) || die "Node.js 18 or newer is required (found: $(node -v 2>/dev/null || echo none))"
+  have npm || die "missing dependency: npm"
+}
+
 ensure_host_prereqs() {
   export DEBIAN_FRONTEND=noninteractive
+  progress 5 "installing system prerequisites"
 
   if have apt-get; then
     apt-get update -qq >&2 || warn "apt-get update failed; continuing"
-    apt-get install -y -qq -o Dpkg::Options::=--force-confold curl ca-certificates tar npm >&2 \
-      || warn "could not install curl/npm; continuing with existing tools"
+    apt-get install -y -qq -o Dpkg::Options::=--force-confold curl ca-certificates tar gnupg >&2 \
+      || warn "could not install curl/gnupg; continuing with existing tools"
   elif have dnf; then
-    dnf install -y curl ca-certificates tar npm >&2 || warn "could not install curl/npm; continuing with existing tools"
+    dnf install -y curl ca-certificates tar >&2 || warn "could not install curl; continuing with existing tools"
   elif have yum; then
-    yum install -y curl ca-certificates tar npm >&2 || warn "could not install curl/npm; continuing with existing tools"
+    yum install -y curl ca-certificates tar >&2 || warn "could not install curl; continuing with existing tools"
   fi
 
   have curl || die "missing dependency: curl"
-  have npm || die "missing dependency: npm"
+  ensure_node_runtime
 }
 
 ensure_latest_opencode() {
@@ -1981,7 +2022,7 @@ apply_ui() {
         TLS_MODE=http
         HTTPS_PORT=""
       else
-        step "requesting the TLS certificate"
+        progress 40 "requesting the TLS certificate"
         if ! issue_certificate; then
           warn "certificate issuance failed; continuing without HTTPS (fix DNS/port 80 and rerun)"
           TLS_MODE=http
@@ -2003,12 +2044,12 @@ apply_ui() {
     resolve_ports
   fi
 
-  step "writing configuration"
+  progress 55 "writing configuration"
   mkdir -p "$CONFIG_DIR" "$RUNNER_DIR"
   chmod 0755 "$CONFIG_DIR" "$RUNNER_DIR"
 
   if [[ $UI_MODE == modified ]] || web_v2; then
-    step "preparing the UI helper"
+    progress 65 "preparing the UI helper"
     write_ui
   fi
 
@@ -2021,17 +2062,17 @@ apply_ui() {
   write_unit
 
   if use_nginx; then
-    step "configuring nginx"
+    progress 80 "configuring nginx"
     write_nginx
     reload_nginx
   fi
 
-  step "enabling the systemd service"
+  progress 88 "enabling the systemd service"
   systemctl daemon-reload
   systemctl enable "$SERVICE_NAME" >/dev/null
   systemctl restart "$SERVICE_NAME"
 
-  step "waiting for the web interface"
+  progress 94 "waiting for the web interface"
   if ! health_check; then
     error "the service did not become healthy"
     journalctl -u "$SERVICE_NAME" -n 40 --no-pager >&2 || true
@@ -2042,7 +2083,9 @@ apply_ui() {
     die "installation failed; check the logs and run 'openweb install' again"
   fi
 
+  progress 98 "installing the openweb command"
   install_manager
+  progress 100 "done"
   print_summary
 }
 
@@ -2087,6 +2130,7 @@ cmd_install() {
   require_root
   need systemctl
   ensure_host_prereqs
+  progress 15 "installing or updating OpenCode"
   ensure_latest_opencode
   need curl
 
