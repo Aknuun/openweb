@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.8.0"
+readonly SCRIPT_VERSION="2.8.1"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -765,8 +765,9 @@ ensure_node_runtime() {
 
   info "installing Node.js 22 (found: $(node -v 2>/dev/null || echo none)); @opencode/cli needs Node 18+"
   if have apt-get; then
-    # The distro npm package pins an old Node and blocks the NodeSource package.
-    apt-get remove -y -qq npm >&2 || true
+    # The distro npm package pins an old Node, and libnode-dev conflicts with
+    # the NodeSource package's headers.
+    apt-get remove -y -qq npm libnode-dev >&2 || true
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >&2 \
       || die "could not add the NodeSource repository"
     apt-get install -y -qq nodejs >&2 || die "could not install Node.js 22"
