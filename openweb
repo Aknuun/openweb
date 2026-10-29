@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.8.5"
+readonly SCRIPT_VERSION="2.9.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -85,7 +85,7 @@ AUTH_USER="opencode"
 LISTEN_HOST="0.0.0.0"
 LISTEN_PORT="5002"
 UI_MODE=""
-WEB_API="v1"
+WEB_API="v2"
 FEATURES=""
 FEATURES_SET=0
 UPSTREAM_PORT=""
@@ -380,10 +380,17 @@ confirm() {
   (( ASSUME_YES == 1 )) && return 0
   [[ -r /dev/tty ]] || return 1
 
-  local answer
-  printf '%s?%s %s [y/N] ' "$C_YELLOW" "$C_RESET" "$1" >/dev/tty
+  local answer hint="[y/N]"
+  if [[ ${2:-} == yes ]]; then
+    hint="[Y/n]"
+  fi
+  printf '%s?%s %s %s ' "$C_YELLOW" "$C_RESET" "$1" "$hint" >/dev/tty
   IFS= read -r answer < /dev/tty || return 1
-  [[ $answer =~ ^[Yy]$ ]]
+  if [[ ${2:-} == yes ]]; then
+    [[ -z $answer || $answer =~ ^[Yy] ]]
+  else
+    [[ $answer =~ ^[Yy]$ ]]
+  fi
 }
 
 read_value() {
@@ -816,6 +823,10 @@ ensure_latest_opencode() {
     if [[ -z $latest ]]; then
       warn "could not check for an OpenCode update; keeping v${current:-unknown}"
       return 0
+    fi
+    if [[ $current =~ ^[0-9]+ ]] && (( ${current%%.*} >= 2 )) && is_interactive; then
+      confirm "OpenCode v${latest} is available (installed: v${current}); update now? (n keeps v${current})" yes \
+        || { warn "keeping OpenCode v${current}"; return 0; }
     fi
   elif [[ -z $latest ]]; then
     die "could not determine the latest OpenCode version; check network access"
@@ -1832,29 +1843,14 @@ config_value() {
 }
 
 interactive_wizard() {
-  local default_mode=2 default_tls=1 default_web=1 auto_domain
+  local default_mode=2 default_tls=1 auto_domain
   if [[ $UI_MODE == original ]]; then
     default_mode=1
   fi
-  if web_v2; then
-    default_web=2
-  fi
-
-  while true; do
-    printf '\n%sWeb engine%s\n' "$C_BOLD" "$C_RESET" >/dev/tty
-    printf '  1) v1.19.4 + custom UI features (modified UI)\n' >/dev/tty
-    printf '  2) v2 native UI (sessions shared with the CLI server)\n' >/dev/tty
-    read_value "Web engine" "$default_web"
-    case $REPLY_VALUE in
-      1 | v1 | V1) WEB_API=v1; break ;;
-      2 | v2 | V2) WEB_API=v2; break ;;
-      *) warn "choose 1 or 2" ;;
-    esac
-  done
 
   if web_v2; then
     UI_MODE=original
-    info "v2 native UI selected; sessions are shared with the v2 CLI server"
+    info "using the v2 native UI; sessions are shared with the CLI server"
   else
     while true; do
       read_value "Install mode (1=original, 2=modified)" "$default_mode"
@@ -1872,15 +1868,6 @@ interactive_wizard() {
       features_menu || true
     fi
   fi
-
-  while true; do
-    read_value "Plain HTTP address" "$LISTEN_HOST"
-    if host_valid "$REPLY_VALUE"; then
-      LISTEN_HOST=$REPLY_VALUE
-      break
-    fi
-    warn "invalid listen address"
-  done
 
   while true; do
     read_value "Plain HTTP port" "$LISTEN_PORT"
@@ -1957,7 +1944,11 @@ interactive_wizard() {
     fi
 
     while true; do
-      read_value "HTTPS port" "$HTTPS_PORT"
+      read_value "HTTPS port (Enter = random)" "$HTTPS_PORT"
+      if [[ -z $REPLY_VALUE ]]; then
+        HTTPS_PORT=$(random_free_port 80 "$LISTEN_PORT" "$UPSTREAM_PORT")
+        break
+      fi
       if port_valid "$REPLY_VALUE" && [[ $REPLY_VALUE != "$LISTEN_PORT" ]] && [[ $REPLY_VALUE != 80 ]]; then
         HTTPS_PORT=$REPLY_VALUE
         break
@@ -1993,7 +1984,7 @@ interactive_wizard() {
     printf '  HTTPS     : %s\n' "$(https_url)"
   fi
   printf '\n'
-  confirm "Proceed with these settings?" || {
+  confirm "Proceed with these settings?" yes || {
     info "aborted"
     exit 0
   }
