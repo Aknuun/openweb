@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.10.1"
+readonly SCRIPT_VERSION="2.10.2"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -375,6 +375,10 @@ validate_settings() {
       [[ -n $TLS_CERT && -f $TLS_CERT ]] || die "TLS certificate not found: ${TLS_CERT:-<empty>}"
       [[ -n $TLS_KEY && -f $TLS_KEY ]] || die "TLS private key not found: ${TLS_KEY:-<empty>}"
     fi
+  fi
+  if [[ $TLS_MODE == proxy && -n $HTTPS_PORT ]]; then
+    port_valid "$HTTPS_PORT" || die "invalid proxy HTTPS port: $HTTPS_PORT"
+    [[ $HTTPS_PORT != 80 ]] || die "proxy HTTPS port cannot be 80"
   fi
 }
 
@@ -1721,7 +1725,11 @@ print_summary() {
   if tls_enabled; then
     https_value=$(https_url)
   elif [[ $TLS_MODE == proxy && -n $DOMAIN ]]; then
-    https_value="https://${DOMAIN}/"
+    if [[ -n $HTTPS_PORT ]]; then
+      https_value="https://${DOMAIN}:${HTTPS_PORT}/"
+    else
+      https_value="https://${DOMAIN}/"
+    fi
   fi
 
   printf '\n'
@@ -1798,9 +1806,14 @@ print_summary() {
       printf '  %sFirewall:%s allow TCP %s for HTTPS.\n' "$C_RED" "$C_RESET" "$HTTPS_PORT"
     fi
   elif [[ $TLS_MODE == proxy ]]; then
-    printf '  %sProxy:%s put this behind your reverse proxy (Caddy example):\n' "$C_GREEN" "$C_RESET"
-    printf '    %s {\n        reverse_proxy 127.0.0.1:%s\n    }\n' "${DOMAIN:-<your-domain>}" "$LISTEN_PORT"
+    local proxy_site=${DOMAIN:-<your-domain>}
+    [[ -n $HTTPS_PORT ]] && proxy_site="${DOMAIN}:${HTTPS_PORT}"
+    printf '  %sProxy:%s terminate TLS at your reverse proxy (Caddy example):\n' "$C_GREEN" "$C_RESET"
+    printf '    %s {\n        reverse_proxy 127.0.0.1:%s\n    }\n' "$proxy_site" "$LISTEN_PORT"
     printf '  %sSecurity:%s bound to %s; only the proxy should reach this port.\n' "$C_YELLOW" "$C_RESET" "$LISTEN_HOST"
+    if [[ -n $HTTPS_PORT ]]; then
+      printf '  %sFirewall:%s allow TCP %s for the HTTPS proxy.\n' "$C_RED" "$C_RESET" "$HTTPS_PORT"
+    fi
   elif [[ $LISTEN_HOST == 0.0.0.0 || $LISTEN_HOST == '::' || $LISTEN_HOST == '*' ]]; then
     printf '  %sSecurity:%s the service is exposed over plain HTTP. Add HTTPS with: sudo openweb install --domain <name>.nip.io --tls letsencrypt\n' "$C_RED" "$C_RESET"
     printf '  %sFirewall:%s if a firewall is enabled, allow TCP %s (for example: sudo ufw allow %s/tcp).\n' "$C_RED" "$C_RESET" "$LISTEN_PORT" "$LISTEN_PORT"
