@@ -366,7 +366,15 @@
   }
 
   function authHeader() {
-    return "Basic " + base64("opencode:" + serverInfo().password);
+    const password = serverInfo().password;
+    return password ? "Basic " + base64("opencode:" + password) : null;
+  }
+
+  function apiHeaders() {
+    const headers = { Accept: "application/json" };
+    const auth = authHeader();
+    if (auth) headers.Authorization = auth;
+    return headers;
   }
 
   function serverSegment() {
@@ -458,12 +466,11 @@
 
   function refreshUsage() {
     const server = serverInfo();
-    if (!server.password) return;
     const now = Date.now();
     if (now - usageAt < 20000) return;
     usageAt = now;
     fetch(server.url + "/api/session", {
-      headers: { Accept: "application/json", Authorization: authHeader() },
+      headers: apiHeaders(),
       credentials: "same-origin",
       cache: "no-store",
     })
@@ -554,12 +561,8 @@
 
   function openHistory() {
     const server = serverInfo();
-    if (!server.password) {
-      window.alert("اول به سرور وصل شو.");
-      return;
-    }
     fetch(server.url + "/api/session", {
-      headers: { Accept: "application/json", Authorization: authHeader() },
+      headers: apiHeaders(),
       credentials: "same-origin",
       cache: "no-store",
     })
@@ -629,10 +632,15 @@
     return bar;
   }
 
+  function titlebar() {
+    const header = document.querySelector('header[data-slot="titlebar-v2"]');
+    if (!header) return null;
+    return header.querySelector(".justify-end") || header;
+  }
+
   function ensureToolbar() {
-    const right = document.getElementById("opencode-titlebar-right");
+    const right = titlebar();
     if (!right) return;
-    if (!serverInfo().password) return;
     let bar = document.querySelector("[data-openweb-v2-toolbar]");
     if (!bar) bar = buildToolbar();
     if (bar.parentElement !== right) right.appendChild(bar);

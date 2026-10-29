@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.11.0"
+readonly SCRIPT_VERSION="2.12.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -21,6 +21,7 @@ readonly RUNNER_FILE="${RUNNER_DIR}/run"
 readonly UI_BASE_FILE="${RUNNER_DIR}/ui-base.js"
 readonly UI_V2_BASE_FILE="${RUNNER_DIR}/ui-v2-base.js"
 readonly UI_FILE="${RUNNER_DIR}/ui.js"
+readonly INJECTOR_FILE="${RUNNER_DIR}/inject.js"
 readonly MANAGER_BIN="/usr/local/bin/openweb"
 readonly AGENT_SKILLS_TARBALL="https://github.com/addyosmani/agent-skills/archive/refs/heads/main.tar.gz"
 readonly GRAPHIFY_PACKAGE="graphifyy"
@@ -218,6 +219,10 @@ ipv6_available() {
 
 use_nginx() {
   [[ $UI_MODE == modified ]] || tls_enabled
+}
+
+use_injector() {
+  web_v2 && ! use_nginx && have node
 }
 
 usage() {
@@ -424,6 +429,13 @@ prompt_password() {
     printf '%sChoose a password for %s (min 8 characters):%s ' "$C_BOLD" "$AUTH_USER" "$C_RESET" >/dev/tty
     IFS= read -rs first < /dev/tty || die "failed to read password"
     printf '\n' >/dev/tty
+
+    if (( ${#first} == 0 )); then
+      PASSWORD=$(openssl rand -base64 24 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 16)
+      [[ -n $PASSWORD ]] || PASSWORD=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 16)
+      info "no password entered; generated a random one (shown at the end)"
+      return 0
+    fi
 
     if (( ${#first} < 8 )); then
       warn "password must be at least 8 characters"
@@ -1185,19 +1197,124 @@ EOF
   chmod 0644 "$CONFIG_FILE"
 }
 
+write_injector() {
+  cat > "$INJECTOR_FILE" <<'EOF'
+"use strict";
+// Injects the openweb toolbar into the OpenCode web UI for hosts without nginx.
+const http = require("http");
+const fs = require("fs");
+const net = require("net");
+
+const opt = {};
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i += 2) opt[argv[i].replace(/^--/, "")] = argv[i + 1];
+
+const listenPort = Number(opt.listen);
+const listenHost = opt.host || "127.0.0.1";
+const backendPort = Number(opt.backend);
+const uiFile = opt.ui;
+const tag = '<script src="/__openweb/ui.js" defer></script>';
+const hop = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade"]);
+
+function backendHeaders(req) {
+  const out = {};
+  for (const [k, v] of Object.entries(req.headers)) if (!hop.has(k)) out[k] = v;
+  out.host = `127.0.0.1:${backendPort}`;
+  out["accept-encoding"] = "identity";
+  return out;
+}
+
+const server = http.createServer((req, res) => {
+  if (req.url.split("?")[0] === "/__openweb/ui.js") {
+    fs.readFile(uiFile, (err, data) => {
+      if (err) {
+        res.writeHead(404);
+        res.end("not found");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "application/javascript; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(data);
+    });
+    return;
+  }
+
+  const upstream = http.request(
+    { host: "127.0.0.1", port: backendPort, method: req.method, path: req.url, headers: backendHeaders(req) },
+    (r) => {
+      const type = String(r.headers["content-type"] || "");
+      if (type.indexOf("text/html") === -1) {
+        res.writeHead(r.statusCode, r.headers);
+        r.pipe(res);
+        return;
+      }
+      const chunks = [];
+      r.on("data", (chunk) => chunks.push(chunk));
+      r.on("end", () => {
+        let body = Buffer.concat(chunks).toString("utf8");
+        if (body.indexOf('src="/__openweb/ui.js"') === -1) {
+          body = body.indexOf("</body>") === -1 ? body + tag : body.replace("</body>", tag + "</body>");
+        }
+        const out = Buffer.from(body);
+        const headers = Object.assign({}, r.headers, {
+          "content-length": out.length,
+          "cache-control": "no-store",
+        });
+        delete headers["transfer-encoding"];
+        res.writeHead(r.statusCode, headers);
+        res.end(out);
+      });
+    }
+  );
+  upstream.on("error", () => {
+    if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain" });
+    res.end("openweb: backend unavailable");
+  });
+  req.pipe(upstream);
+});
+
+server.on("upgrade", (req, socket, head) => {
+  const upstream = net.connect(backendPort, "127.0.0.1", () => {
+    let raw = `${req.method} ${req.url} HTTP/1.1\r\n`;
+    const headers = Object.assign({}, req.headers, {
+      host: `127.0.0.1:${backendPort}`,
+      connection: "Upgrade",
+    });
+    for (const [k, v] of Object.entries(headers)) {
+      for (const line of Array.isArray(v) ? v : [v]) raw += `${k}: ${line}\r\n`;
+    }
+    upstream.write(`${raw}\r\n`);
+    if (head && head.length) upstream.write(head);
+    socket.pipe(upstream).pipe(socket);
+  });
+  upstream.on("error", () => socket.destroy());
+  socket.on("error", () => upstream.destroy());
+});
+
+server.listen(listenPort, listenHost);
+EOF
+  chmod 0644 "$INJECTOR_FILE"
+}
+
 write_runner() {
-  local host port
-  if use_nginx; then
+  local host port inject=""
+  if use_nginx || use_injector; then
     host="127.0.0.1"
     port=$UPSTREAM_PORT
   else
     host=$LISTEN_HOST
     port=$LISTEN_PORT
   fi
+  if use_injector; then
+    inject="\"$(command -v node)\" \"${INJECTOR_FILE}\" --host \"${LISTEN_HOST}\" --listen \"${LISTEN_PORT}\" --backend \"${UPSTREAM_PORT}\" --ui \"${UI_FILE}\" &"
+  fi
 
   cat > "$RUNNER_FILE" <<EOF
 #!/bin/sh
 set -eu
+${inject}
 OPENCODE_SERVER_USERNAME="${AUTH_USER}"
 OPENCODE_SERVER_PASSWORD="\$(cat "${PASSWORD_FILE}")"
 export OPENCODE_SERVER_USERNAME OPENCODE_SERVER_PASSWORD
@@ -2103,7 +2220,7 @@ apply_ui() {
 
   # Pick free ports instead of failing when 443, 80 or the plain HTTP port is taken.
   resolve_ports
-  if use_nginx; then
+  if use_nginx || use_injector; then
     select_upstream_port
   fi
 
@@ -2155,6 +2272,10 @@ apply_ui() {
   if [[ $UI_MODE == modified ]] || web_v2; then
     progress 65 "preparing the UI helper"
     write_ui
+  fi
+
+  if use_injector; then
+    write_injector
   fi
 
   if ! tls_enabled; then
