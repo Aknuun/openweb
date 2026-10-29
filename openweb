@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.9.0"
+readonly SCRIPT_VERSION="2.9.1"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -1329,8 +1329,10 @@ ensure_nginx() {
     NGINX_INSTALLED_BY_OPENWEB=1
   fi
 
-  systemctl enable --now nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1 || true
-  systemctl is-active --quiet nginx || die "nginx failed to start"
+  # Do not require nginx to start yet: port 80 may belong to another service
+  # (Caddy, an old site, ...). It is started when our configuration is written.
+  systemctl enable nginx >/dev/null 2>&1 || true
+  have nginx || die "nginx failed to install"
 }
 
 write_nginx() {
