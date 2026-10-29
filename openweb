@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.10.3"
+readonly SCRIPT_VERSION="2.11.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -68,6 +68,8 @@ if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   C_BLUE=$'\033[1;34m'
   C_MAGENTA=$'\033[1;35m'
   C_CYAN=$'\033[1;36m'
+  C_ON_BLUE=$'\033[1;97;44m'
+  C_ON_YELLOW=$'\033[1;30;103m'
 else
   C_RESET=""
   C_BOLD=""
@@ -78,6 +80,8 @@ else
   C_BLUE=""
   C_MAGENTA=""
   C_CYAN=""
+  C_ON_BLUE=""
+  C_ON_YELLOW=""
 fi
 
 SERVICE_USER="root"
@@ -1756,6 +1760,20 @@ health_check() {
   return 1
 }
 
+print_login_banner() {
+  local url=$1 line
+  [[ -n $url ]] || return 0
+  # Terminals cannot resize fonts; a full-width colored block is the strongest portable emphasis.
+  printf '\n\n'
+  for line in "" "LOGIN URL" "$url" ""; do
+    printf '%s  %-60s%s\n' "$C_ON_BLUE" "$line" "$C_RESET"
+  done
+  for line in "" "PASSWORD" "$PASSWORD" ""; do
+    printf '%s  %-60s%s\n' "$C_ON_YELLOW" "$line" "$C_RESET"
+  done
+  printf '\n'
+}
+
 print_summary() {
   local http_url_value local_http_url https_value
   http_url_value=$(public_url)
@@ -1859,6 +1877,7 @@ print_summary() {
   fi
 
   printf '%s================================================================%s\n\n' "$C_CYAN" "$C_RESET"
+  print_login_banner "${https_value:-$http_url_value}"
 }
 
 install_manager() {
@@ -2167,6 +2186,9 @@ apply_ui() {
     fi
     die "installation failed; check the logs and run 'openweb install' again"
   fi
+
+  progress 96 "installing default add-ons"
+  install_missing_addons
 
   progress 98 "installing the openweb command"
   install_manager
@@ -2556,14 +2578,14 @@ import os, sys, tarfile
 archive, dest = sys.argv[1], sys.argv[2]
 dest_real = os.path.realpath(dest)
 with tarfile.open(archive, "r:gz") as tf:
-    try:
-        tf.extractall(dest, filter="data")
-    except TypeError:
-        for member in tf.getmembers():
-            target = os.path.realpath(os.path.join(dest, member.name))
-            if target != dest_real and not target.startswith(dest_real + os.sep):
-                raise RuntimeError("unsafe path in archive: " + member.name)
-        tf.extractall(dest)
+    for member in tf.getmembers():
+        # Symlinks trip tarfile's path checks; the real skill dirs are extracted anyway.
+        if member.issym() or member.islnk():
+            continue
+        target = os.path.realpath(os.path.join(dest_real, member.name))
+        if target != dest_real and not target.startswith(dest_real + os.sep):
+            raise RuntimeError("unsafe path in archive: " + member.name)
+        tf.extract(member, dest_real)
 PY
 }
 
@@ -2640,6 +2662,33 @@ install_context_pruning() {
 
 install_memory() {
   install_opencode_plugin "$MEM_PLUGIN_PACKAGE" "opencode-mem"
+}
+
+addon_present() {
+  local name=$1 config_file="$SERVICE_HOME/.config/opencode/opencode.jsonc"
+  [[ -f $config_file ]] || config_file="$SERVICE_HOME/.config/opencode/opencode.json"
+  case $name in
+    agent-skills) [[ -f "$SERVICE_HOME/.config/opencode/skills/using-agent-skills/SKILL.md" ]] ;;
+    graphify) [[ -f "$SERVICE_HOME/.opencode/plugins/graphify.js" ]] ;;
+    context-pruning) grep -q 'opencode-dcp' "$config_file" 2>/dev/null ;;
+    memory) grep -q 'opencode-mem' "$config_file" 2>/dev/null ;;
+    *) return 1 ;;
+  esac
+}
+
+install_missing_addons() {
+  addon_present agent-skills \
+    || ( install_agent_skills ) \
+    || warn "agent-skills failed; install later with: sudo openweb addons install agent-skills"
+  addon_present graphify \
+    || ( install_graphify ) \
+    || warn "graphify failed; install later with: sudo openweb addons install graphify"
+  addon_present context-pruning \
+    || ( install_context_pruning ) \
+    || warn "context-pruning failed; install later with: sudo openweb addons install context-pruning"
+  addon_present memory \
+    || ( install_memory ) \
+    || warn "memory failed; install later with: sudo openweb addons install memory"
 }
 
 addons_status() {
