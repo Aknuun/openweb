@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.8.4"
+readonly SCRIPT_VERSION="2.8.5"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -2747,6 +2747,7 @@ main_menu() {
       printf '  %s8)%s Agent add-ons (skills, graphify, memory)\n' "$C_BOLD" "$C_RESET" >/dev/tty
     else
       printf '  %s2)%s Help\n' "$C_BOLD" "$C_RESET" >/dev/tty
+      printf '  %s(OpenCode Web is not installed yet - choose 1)%s\n' "$C_DIM" "$C_RESET" >/dev/tty
     fi
     printf '  %s0)%s Exit\n' "$C_BOLD" "$C_RESET" >/dev/tty
     printf '\nSelect: ' >/dev/tty
