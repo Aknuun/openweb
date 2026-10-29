@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.9.1"
+readonly SCRIPT_VERSION="2.9.2"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -1333,6 +1333,11 @@ ensure_nginx() {
   # (Caddy, an old site, ...). It is started when our configuration is written.
   systemctl enable nginx >/dev/null 2>&1 || true
   have nginx || die "nginx failed to install"
+  # ACME uses the default site's webroot, so nginx must be up when 80 is free.
+  if port_free 80; then
+    systemctl start nginx >/dev/null 2>&1 || true
+    systemctl is-active --quiet nginx || die "nginx failed to start"
+  fi
 }
 
 write_nginx() {
