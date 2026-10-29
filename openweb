@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.8.1"
+readonly SCRIPT_VERSION="2.8.2"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -801,7 +801,8 @@ ensure_host_prereqs() {
 }
 
 ensure_latest_opencode() {
-  local latest bin current prefix target backup=""
+  local latest bin current prefix=/usr/local target name backup
+  local -a moved=()
 
   latest=$(latest_opencode_version || true)
   bin=$(find_system_opencode || true)
@@ -822,22 +823,27 @@ ensure_latest_opencode() {
 
   info "installing OpenCode v${latest} (latest)"
 
-  # npm refuses to overwrite an `opencode` bin owned by another package.
-  prefix=$(npm prefix -g 2>/dev/null || true)
-  if [[ -n $prefix ]]; then
-    target="${prefix}/bin/opencode"
+  # Install into /usr/local even when npm's prefix is /usr (NodeSource), and
+  # move any old bin aside: npm refuses to overwrite bins it does not own.
+  for name in opencode opencode2; do
+    target="${prefix}/bin/${name}"
     if [[ -e $target || -L $target ]]; then
       backup="${target}.openweb-backup"
       rm -f "$backup"
       mv -f "$target" "$backup" || die "could not replace ${target}"
+      moved+=("$target")
     fi
-  fi
+  done
 
-  if ! npm install -g --no-fund --no-audit "@opencode/cli@${latest}" >&2; then
-    [[ -z $backup ]] || mv -f "$backup" "$target"
+  if ! npm install -g --prefix "$prefix" --no-fund --no-audit "@opencode/cli@${latest}" >&2; then
+    for target in "${moved[@]}"; do
+      mv -f "${target}.openweb-backup" "$target"
+    done
     die "failed to install OpenCode v${latest}"
   fi
-  [[ -z $backup ]] || rm -f "$backup"
+  for target in "${moved[@]}"; do
+    rm -f "${target}.openweb-backup"
+  done
   hash -r 2>/dev/null || true
 }
 
