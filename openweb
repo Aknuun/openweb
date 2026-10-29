@@ -759,7 +759,7 @@ ensure_host_prereqs() {
 }
 
 ensure_latest_opencode() {
-  local latest bin current
+  local latest bin current prefix target backup=""
 
   latest=$(latest_opencode_version || true)
   bin=$(find_system_opencode || true)
@@ -779,8 +779,23 @@ ensure_latest_opencode() {
   fi
 
   info "installing OpenCode v${latest} (latest)"
-  npm install -g --no-fund --no-audit "@opencode/cli@${latest}" >&2 \
-    || die "failed to install OpenCode v${latest}"
+
+  # npm refuses to overwrite an `opencode` bin owned by another package.
+  prefix=$(npm prefix -g 2>/dev/null || true)
+  if [[ -n $prefix ]]; then
+    target="${prefix}/bin/opencode"
+    if [[ -e $target || -L $target ]]; then
+      backup="${target}.openweb-backup"
+      rm -f "$backup"
+      mv -f "$target" "$backup" || die "could not replace ${target}"
+    fi
+  fi
+
+  if ! npm install -g --no-fund --no-audit "@opencode/cli@${latest}" >&2; then
+    [[ -z $backup ]] || mv -f "$backup" "$target"
+    die "failed to install OpenCode v${latest}"
+  fi
+  [[ -z $backup ]] || rm -f "$backup"
   hash -r 2>/dev/null || true
 }
 
