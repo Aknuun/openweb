@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.8.2"
+readonly SCRIPT_VERSION="2.8.3"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -2735,12 +2735,12 @@ main_menu() {
     printf '%s Control panel%s\n\n' "$C_BOLD" "$C_RESET" >/dev/tty
     printf '  %s1)%s Install / reinstall\n' "$C_BOLD" "$C_RESET" >/dev/tty
     if [[ -f $CONFIG_FILE ]]; then
-      printf '  %s2)%s Features (enable / disable)\n' "$C_BOLD" "$C_RESET" >/dev/tty
-      printf '  %s3)%s Status\n' "$C_BOLD" "$C_RESET" >/dev/tty
-      printf '  %s4)%s Change password\n' "$C_BOLD" "$C_RESET" >/dev/tty
-      printf '  %s5)%s Update\n' "$C_BOLD" "$C_RESET" >/dev/tty
+      printf '  %s2)%s Update\n' "$C_BOLD" "$C_RESET" >/dev/tty
+      printf '  %s3)%s Uninstall\n' "$C_BOLD" "$C_RESET" >/dev/tty
+      printf '  %s4)%s Status\n' "$C_BOLD" "$C_RESET" >/dev/tty
+      printf '  %s5)%s Change password\n' "$C_BOLD" "$C_RESET" >/dev/tty
       printf '  %s6)%s Logs\n' "$C_BOLD" "$C_RESET" >/dev/tty
-      printf '  %s7)%s Uninstall\n' "$C_BOLD" "$C_RESET" >/dev/tty
+      printf '  %s7)%s Features (enable / disable)\n' "$C_BOLD" "$C_RESET" >/dev/tty
       printf '  %s8)%s Agent add-ons (skills, graphify, memory)\n' "$C_BOLD" "$C_RESET" >/dev/tty
     else
       printf '  %s2)%s Help\n' "$C_BOLD" "$C_RESET" >/dev/tty
@@ -2753,22 +2753,22 @@ main_menu() {
       1) cmd_install; pause ;;
       2)
         if [[ -f $CONFIG_FILE ]]; then
-          cmd_features
+          cmd_update
         else
           usage
         fi
         pause
         ;;
       3)
-        if [[ -f $CONFIG_FILE ]]; then cmd_status; else warn "not installed"; fi
+        if [[ -f $CONFIG_FILE ]]; then cmd_uninstall; else warn "not installed"; fi
         pause
         ;;
       4)
-        if [[ -f $CONFIG_FILE ]]; then cmd_password; else warn "not installed"; fi
+        if [[ -f $CONFIG_FILE ]]; then cmd_status; else warn "not installed"; fi
         pause
         ;;
       5)
-        if [[ -f $CONFIG_FILE ]]; then cmd_update; else warn "not installed"; fi
+        if [[ -f $CONFIG_FILE ]]; then cmd_password; else warn "not installed"; fi
         pause
         ;;
       6)
@@ -2776,7 +2776,7 @@ main_menu() {
         pause
         ;;
       7)
-        if [[ -f $CONFIG_FILE ]]; then cmd_uninstall; else warn "not installed"; fi
+        if [[ -f $CONFIG_FILE ]]; then cmd_features; else warn "not installed"; fi
         pause
         ;;
       8)
