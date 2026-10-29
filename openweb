@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.6.0"
+readonly SCRIPT_VERSION="2.7.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -94,7 +94,7 @@ TLS_MODE=""
 TLS_CERT=""
 TLS_KEY=""
 TLS_EMAIL=""
-HTTPS_PORT="443"
+HTTPS_PORT=""
 PASSWORD="${OPENWEB_PASSWORD:-}"
 PASSWORD_REUSED=0
 ASSUME_YES=0
@@ -240,7 +240,7 @@ ${C_BOLD}Options${C_RESET}
       --email <email>       Let's Encrypt account email (optional)
       --tls-cert <path>     Certificate file for --tls custom
       --tls-key <path>      Private key file for --tls custom
-      --https-port <port>   HTTPS port (default: 443)
+      --https-port <port>   HTTPS port (default: random free port)
       --reuse               Reuse the current configuration and password
   -y, --yes                 Do not ask for confirmation
       --no-color            Disable colored output
@@ -818,6 +818,20 @@ find_free_port() {
   die "no free port found"
 }
 
+random_free_port() {
+  local attempt port skip
+  for ((attempt = 0; attempt < 64; attempt++)); do
+    port=$(( (RANDOM * 32768 + RANDOM) % 40001 + 20000 ))
+    port_free "$port" || continue
+    for skip in "$@"; do
+      [[ $port == "$skip" ]] && continue 2
+    done
+    printf '%s' "$port"
+    return 0
+  done
+  die "no free random port found"
+}
+
 check_port_free() {
   local attempt
   for ((attempt = 1; attempt <= 20; attempt++)); do
@@ -910,21 +924,15 @@ select_listen_port() {
 }
 
 select_https_port() {
-  if [[ -z $HTTPS_PORT ]]; then
-    HTTPS_PORT=443
-  fi
-  if [[ $HTTPS_PORT == 80 || $HTTPS_PORT == "$LISTEN_PORT" ]]; then
-    warn "HTTPS port ${HTTPS_PORT} conflicts with another listener; selecting a free port"
-    HTTPS_PORT=443
-    if [[ $HTTPS_PORT == "$LISTEN_PORT" ]]; then
-      HTTPS_PORT=8443
-    fi
+  if [[ -z $HTTPS_PORT || $HTTPS_PORT == 80 || $HTTPS_PORT == "$LISTEN_PORT" ]]; then
+    [[ -z $HTTPS_PORT ]] || warn "HTTPS port ${HTTPS_PORT} conflicts with another listener; selecting a free port"
+    HTTPS_PORT=$(random_free_port 80 "$LISTEN_PORT" "$UPSTREAM_PORT")
   fi
   if port_available_for_nginx "$HTTPS_PORT"; then
     return 0
   fi
   local new
-  new=$(find_free_port_excluding 8443 80 "$LISTEN_PORT" "$UPSTREAM_PORT")
+  new=$(random_free_port 80 "$LISTEN_PORT" "$UPSTREAM_PORT" "$HTTPS_PORT")
   warn "HTTPS port ${HTTPS_PORT} is in use; using ${new} instead"
   HTTPS_PORT=$new
 }
@@ -941,9 +949,6 @@ select_upstream_port() {
 
 resolve_ports() {
   if tls_enabled; then
-    if [[ -z $HTTPS_PORT ]]; then
-      HTTPS_PORT=443
-    fi
     if [[ $LISTEN_PORT == 80 || $LISTEN_PORT == 443 || $LISTEN_PORT == "$HTTPS_PORT" ]]; then
       warn "moving the plain HTTP front to 5002 so it does not conflict with HTTPS/ACME"
       LISTEN_PORT=5002
@@ -1758,7 +1763,7 @@ load_config() {
   : "${TLS_CERT:=}"
   : "${TLS_KEY:=}"
   : "${TLS_EMAIL:=}"
-  : "${HTTPS_PORT:=443}"
+  : "${HTTPS_PORT:=}"
   FEATURES_SET=1
   if tls_enabled; then
     if port_available_for_nginx 80; then
@@ -2135,9 +2140,6 @@ cmd_install() {
   fi
   if tls_enabled && [[ -z $DOMAIN ]]; then
     die "could not determine a public nip.io domain; pass --domain <name>"
-  fi
-  if [[ -z $HTTPS_PORT ]]; then
-    HTTPS_PORT=443
   fi
 
   if (( OPT_FEATURES_SET == 1 )) && [[ -z $OPT_UI_MODE ]] && [[ -z $ENV_UI ]]; then
