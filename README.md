@@ -67,6 +67,12 @@ Or run it directly (the password prompt uses `/dev/tty`):
 curl -fsSL https://raw.githubusercontent.com/Aknuun/openweb/main/openweb | sudo bash
 ```
 
+Before any other step, it runs `apt-get update` (or `dnf`/`yum` on RHEL) and
+installs the prerequisites `curl`, `npm`, `ca-certificates` and `tar` without
+asking, then installs or updates the latest OpenCode with
+`npm install -g @opencode/cli@latest` at `/usr/local/bin/opencode`. If that
+version is already installed, it is left alone.
+
 The interactive wizard asks for:
 
 1. web engine: v2 native UI (CLI session sync) or v1.19.4 + custom UI
@@ -347,7 +353,9 @@ Automation environment variables:
 - `--web v1` uses a private v1.19.4 copy in
   `/usr/local/lib/openweb/opencode`. The modified UI requires v1. Sessions sync
   only with a v1 CLI (`session` table).
-- The system `opencode` CLI is **never** modified.
+- The system `opencode` CLI is installed or updated to the latest release
+  (`@opencode/cli@latest` at `/usr/local/bin/opencode`) before the service is
+  installed; it is left untouched when that version is already present.
 - The launcher auto-detects v1 (`web`) and v2 (`serve`).
 
 Use v2 for CLI session sync; use v1 only if you need the custom helpers and
@@ -412,6 +420,7 @@ the managed HTTPS configuration. To keep the custom v1 UI instead, use
 - Linux with systemd
 - root access
 - `bash`, `curl`, `openssl`, `python3`
+- `npm` (installed automatically with the other prerequisites when missing)
 - `uv` is installed automatically for the graphify add-on
 - nginx for modified mode or HTTPS (installed automatically on Debian/Ubuntu/RHEL)
 - certbot for Let's Encrypt (installed automatically)

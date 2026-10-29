@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.5.0"
+readonly SCRIPT_VERSION="2.6.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -731,6 +731,57 @@ ensure_compatible_opencode() {
     install_pinned_opencode
   fi
   return 0
+}
+
+opencode_version() {
+  "$1" --version 2>/dev/null | awk '{ print $NF }' | sed 's/^v//'
+}
+
+latest_opencode_version() {
+  npm view @opencode/cli version --silent 2>/dev/null | tail -n1
+}
+
+ensure_host_prereqs() {
+  export DEBIAN_FRONTEND=noninteractive
+
+  if have apt-get; then
+    apt-get update -qq >&2 || warn "apt-get update failed; continuing"
+    apt-get install -y -qq -o Dpkg::Options::=--force-confold curl ca-certificates tar npm >&2 \
+      || warn "could not install curl/npm; continuing with existing tools"
+  elif have dnf; then
+    dnf install -y curl ca-certificates tar npm >&2 || warn "could not install curl/npm; continuing with existing tools"
+  elif have yum; then
+    yum install -y curl ca-certificates tar npm >&2 || warn "could not install curl/npm; continuing with existing tools"
+  fi
+
+  have curl || die "missing dependency: curl"
+  have npm || die "missing dependency: npm"
+}
+
+ensure_latest_opencode() {
+  local latest bin current
+
+  latest=$(latest_opencode_version || true)
+  bin=$(find_system_opencode || true)
+
+  if [[ -n $bin ]]; then
+    current=$(opencode_version "$bin")
+    if [[ -n $latest && $current == "$latest" ]]; then
+      info "OpenCode v${current} is already installed"
+      return 0
+    fi
+    if [[ -z $latest ]]; then
+      warn "could not check for an OpenCode update; keeping v${current:-unknown}"
+      return 0
+    fi
+  elif [[ -z $latest ]]; then
+    die "could not determine the latest OpenCode version; check network access"
+  fi
+
+  info "installing OpenCode v${latest} (latest)"
+  npm install -g --no-fund --no-audit "@opencode/cli@${latest}" >&2 \
+    || die "failed to install OpenCode v${latest}"
+  hash -r 2>/dev/null || true
 }
 
 port_free() {
@@ -2015,6 +2066,8 @@ apply_overrides() {
 cmd_install() {
   require_root
   need systemctl
+  ensure_host_prereqs
+  ensure_latest_opencode
   need curl
 
   local installed=0 wizard_ran=0

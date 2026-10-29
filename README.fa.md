@@ -68,6 +68,12 @@ sudo /tmp/openweb
 curl -fsSL https://raw.githubusercontent.com/Aknuun/openweb/main/openweb | sudo bash
 ```
 
+پیش از هر مرحله‌ای، دستور بدون هیچ پرسشی `apt-get update` (یا `dnf`/`yum` روی
+RHEL) را اجرا می‌کند و پیش‌نیازهای `curl`، `npm`، `ca-certificates` و `tar` را
+نصب می‌کند، سپس آخرین نسخه OpenCode را با
+`npm install -g @opencode/cli@latest` در `/usr/local/bin/opencode` نصب یا
+به‌روز می‌کند. اگر همان نسخه از قبل نصب شده باشد، دوباره نصب نمی‌شود.
+
 ویزارد تعاملی این موارد را می‌پرسد:
 
 1. موتور وب: رابط بومی v2 (سینک CLI) یا v1.19.4 + رابط سفارشی
@@ -347,7 +353,9 @@ memory را نمی‌خواهی از targetهای جداگانه استفاده 
 - `--web v1` از نسخه خصوصی v1.19.4 در `/usr/local/lib/openweb/opencode`
   استفاده می‌کند. رابط ویرایش‌شده به v1 نیاز دارد و سشن‌ها فقط با CLI نسخه ۱
   (`session`) سینک می‌شوند.
-- CLI سیستمی `opencode` هرگز تغییر نمی‌کند.
+- CLI سیستمی `opencode` پیش از نصب سرویس به آخرین نسخه
+  (`@opencode/cli@latest` در `/usr/local/bin/opencode`) نصب یا به‌روز می‌شود؛
+  اگر همان نسخه موجود باشد، دست نخورده می‌ماند.
 - اجراکننده خودکار v1 (`web`) و v2 (`serve`) را تشخیص می‌دهد.
 
 برای سینک سشن‌های CLI از v2 استفاده کنید؛ v1 را فقط اگر به قابلیت‌های سفارشی
@@ -411,6 +419,7 @@ sudo /tmp/openweb install --reuse --domain <your-domain>.nip.io --tls letsencryp
 - لینوکس با systemd
 - دسترسی root
 - `bash`، `curl`، `openssl`، `python3`
+- `npm` (در صورت نبود همراه با سایر پیش‌نیازها خودکار نصب می‌شود)
 - `uv` برای افزونهٔ graphify خودکار نصب می‌شود
 - nginx برای حالت ویرایش‌شده یا HTTPS (نصب خودکار روی Debian/Ubuntu/RHEL)
 - certbot برای Let's Encrypt (نصب خودکار)
