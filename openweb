@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.8.3"
+readonly SCRIPT_VERSION="2.8.4"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -963,6 +963,9 @@ select_listen_port() {
     return 0
   fi
   if port_owned_by_nginx "$LISTEN_PORT" && [[ -f $NGINX_CONF ]] && [[ $(config_value LISTEN_PORT) == "$LISTEN_PORT" ]]; then
+    return 0
+  fi
+  if [[ $(config_value LISTEN_PORT) == "$LISTEN_PORT" ]] && [[ $(port_owner "$LISTEN_PORT") == opencode ]]; then
     return 0
   fi
   local new
