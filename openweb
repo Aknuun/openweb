@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.9.2"
+readonly SCRIPT_VERSION="2.10.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -187,6 +187,7 @@ normalize_tls() {
     http | none | off | no) printf 'http' ;;
     letsencrypt | let\'s-encrypt | le | acme) printf 'letsencrypt' ;;
     custom | cert | file) printf 'custom' ;;
+    proxy | reverse-proxy | behind-proxy) printf 'proxy' ;;
     *) return 1 ;;
   esac
 }
@@ -204,7 +205,7 @@ web_v2() {
 }
 
 tls_enabled() {
-  [[ ${TLS_MODE:-http} != http ]]
+  [[ ${TLS_MODE:-http} == letsencrypt || ${TLS_MODE:-http} == custom ]]
 }
 
 ipv6_available() {
@@ -212,7 +213,7 @@ ipv6_available() {
 }
 
 use_nginx() {
-  [[ $UI_MODE == modified || ${TLS_MODE:-http} != http ]]
+  [[ $UI_MODE == modified ]] || tls_enabled
 }
 
 usage() {
@@ -245,6 +246,7 @@ ${C_BOLD}Options${C_RESET}
       --password <value>    Web login password (prompted if omitted)
       --web <v1|v2>         Web engine: v1.19.4 + custom UI, or v2 native
                             (v2 adds a quick toolbar and shares sessions with the CLI)
+      --tls proxy           Run behind an existing reverse proxy (no ports 80/443)
       --original            Serve the unmodified OpenCode web UI
       --modified            Serve the modified v1 UI (requires nginx)
       --features <list>     Comma-separated v1 features (use "all" or "none")
@@ -281,7 +283,7 @@ ${C_BOLD}Environment${C_RESET}
   OPENWEB_UI                original | modified (v1 only)
   OPENWEB_FEATURES          Comma-separated v1 feature list
   OPENWEB_DOMAIN            HTTPS domain
-  OPENWEB_TLS               letsencrypt | custom | http
+  OPENWEB_TLS               letsencrypt | custom | http | proxy
   OPENWEB_EMAIL             Let's Encrypt email
   OPENWEB_TLS_CERT          Custom certificate path
   OPENWEB_TLS_KEY           Custom private key path
@@ -358,7 +360,7 @@ validate_settings() {
   fi
 
   case ${TLS_MODE:-http} in
-    http | letsencrypt | custom) ;;
+    http | letsencrypt | custom | proxy) ;;
     *) die "invalid TLS mode: ${TLS_MODE:-<empty>} (http|letsencrypt|custom)" ;;
   esac
 
@@ -1788,6 +1790,10 @@ print_summary() {
       printf '  %sTLS warning:%s port 80 is unavailable, so the HTTP redirect and automatic certificate renewal are disabled. Use the HTTPS URL above.\n' "$C_YELLOW" "$C_RESET"
       printf '  %sFirewall:%s allow TCP %s for HTTPS.\n' "$C_RED" "$C_RESET" "$HTTPS_PORT"
     fi
+  elif [[ $TLS_MODE == proxy ]]; then
+    printf '  %sProxy:%s put this behind your reverse proxy (Caddy example):\n' "$C_GREEN" "$C_RESET"
+    printf '    %s {\n        reverse_proxy 127.0.0.1:%s\n    }\n' "${DOMAIN:-<your-domain>}" "$LISTEN_PORT"
+    printf '  %sSecurity:%s bound to %s; only the proxy should reach this port.\n' "$C_YELLOW" "$C_RESET" "$LISTEN_HOST"
   elif [[ $LISTEN_HOST == 0.0.0.0 || $LISTEN_HOST == '::' || $LISTEN_HOST == '*' ]]; then
     printf '  %sSecurity:%s the service is exposed over plain HTTP. Add HTTPS with: sudo openweb install --domain <name>.nip.io --tls letsencrypt\n' "$C_RED" "$C_RESET"
     printf '  %sFirewall:%s if a firewall is enabled, allow TCP %s (for example: sudo ufw allow %s/tcp).\n' "$C_RED" "$C_RESET" "$LISTEN_PORT" "$LISTEN_PORT"
@@ -1898,22 +1904,30 @@ interactive_wizard() {
   [[ -n $DOMAIN ]] || DOMAIN=$auto_domain
   case ${TLS_MODE:-} in
     custom) default_tls=3 ;;
-    *) default_tls=1 ;;
+    proxy) default_tls=4 ;;
+    letsencrypt) default_tls=1 ;;
+    *) if port_free 80; then default_tls=1; else default_tls=4; fi ;;
   esac
 
   while true; do
     printf '\n%sHTTPS / TLS%s\n' "$C_BOLD" "$C_RESET" >/dev/tty
-    printf '  1) Let\047s Encrypt (automatic HTTPS, recommended)\n' >/dev/tty
+    printf '  1) Let\047s Encrypt (standalone, uses ports 80 and 443)\n' >/dev/tty
     printf '  2) HTTP only\n' >/dev/tty
     printf '  3) Custom certificate\n' >/dev/tty
+    printf '  4) Behind an existing reverse proxy (no ports 80/443)\n' >/dev/tty
     read_value "TLS mode" "$default_tls"
     case $REPLY_VALUE in
       1 | letsencrypt | le | LetsEncrypt) TLS_MODE=letsencrypt; break ;;
       2 | http | none | off | HTTP) TLS_MODE=http; break ;;
       3 | custom | cert | Custom) TLS_MODE=custom; break ;;
-      *) warn "choose 1, 2 or 3" ;;
+      4 | proxy | reverse-proxy | Proxy) TLS_MODE=proxy; break ;;
+      *) warn "choose 1, 2, 3 or 4" ;;
     esac
   done
+
+  if [[ $TLS_MODE == proxy && -z $OPT_HOST ]]; then
+    LISTEN_HOST=127.0.0.1
+  fi
 
   if tls_enabled; then
     while true; do
@@ -1981,6 +1995,9 @@ interactive_wizard() {
   printf '  Mode      : %s\n' "$UI_MODE"
   printf '  HTTP      : %s:%s\n' "$LISTEN_HOST" "$LISTEN_PORT"
   printf '  Username  : %s\n' "$AUTH_USER"
+  if [[ $TLS_MODE == proxy ]]; then
+    printf '  Proxy     : behind an existing reverse proxy\n'
+  fi
   if web_v2; then
     printf '  Sync      : sessions shared with the v2 CLI server\n'
   elif [[ $UI_MODE == modified ]]; then
@@ -2026,9 +2043,10 @@ apply_ui() {
     ensure_certbot
     if ! cert_exists || certificate_needs_renewal; then
       if (( ACME_HTTP_AVAILABLE == 0 )); then
-        warn "cannot request a Let's Encrypt certificate because port 80 is unavailable; continuing without HTTPS"
-        TLS_MODE=http
+        warn "port 80 is in use; serving behind a reverse proxy on ${LISTEN_HOST}:${LISTEN_PORT} instead"
+        TLS_MODE=proxy
         HTTPS_PORT=""
+        [[ -n $OPT_HOST ]] || LISTEN_HOST=127.0.0.1
       else
         progress 40 "requesting the TLS certificate"
         if ! issue_certificate; then
@@ -2180,6 +2198,8 @@ cmd_install() {
   if [[ -z $TLS_MODE ]]; then
     if [[ -n $OPT_DOMAIN || -n $ENV_DOMAIN ]]; then
       TLS_MODE=letsencrypt
+    elif ! port_free 80; then
+      TLS_MODE=proxy
     else
       TLS_MODE=http
     fi
@@ -2192,6 +2212,9 @@ cmd_install() {
   fi
   if tls_enabled && [[ -z $DOMAIN ]]; then
     die "could not determine a public nip.io domain; pass --domain <name>"
+  fi
+  if [[ $TLS_MODE == proxy && -z $OPT_HOST ]]; then
+    LISTEN_HOST=127.0.0.1
   fi
 
   if (( OPT_FEATURES_SET == 1 )) && [[ -z $OPT_UI_MODE ]] && [[ -z $ENV_UI ]]; then
