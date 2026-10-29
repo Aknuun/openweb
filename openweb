@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.10.2"
+readonly SCRIPT_VERSION="2.10.3"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
@@ -937,6 +937,45 @@ port_owned_by_nginx() {
 
 port_available_for_nginx() {
   port_free "$1" || port_owned_by_nginx "$1"
+}
+
+# short: only Caddyfile-style configs; other proxies keep the printed snippet
+configure_caddy_proxy() {
+  [[ $TLS_MODE == proxy && -n $DOMAIN ]] || return 0
+  local pid cfg="" bin unit i port_suffix site backup
+  local -a args=()
+  pid=$(pgrep -x caddy | head -n 1) || true
+  [[ -n $pid ]] || return 0
+  bin=$(readlink -f "/proc/${pid}/exe" 2>/dev/null) || return 0
+  mapfile -t args < <(tr '\0' '\n' < "/proc/${pid}/cmdline" 2>/dev/null)
+  for ((i = 1; i < ${#args[@]}; i++)); do
+    case ${args[i]} in
+      --config) cfg=${args[i + 1]} ;;
+      --config=*) cfg=${args[i]#--config=} ;;
+    esac
+  done
+  [[ -n $cfg && -f $cfg ]] || cfg=/etc/caddy/Caddyfile
+  [[ -f $cfg ]] || return 0
+  port_suffix=""
+  [[ -z $HTTPS_PORT ]] || port_suffix=":${HTTPS_PORT}"
+  site="https://${DOMAIN}${port_suffix}"
+  grep -qF "$site" "$cfg" && return 0
+  backup="${cfg}.openweb-backup"
+  cp -a "$cfg" "$backup" 2>/dev/null || return 0
+  printf '\n%s {\n    reverse_proxy 127.0.0.1:%s\n}\n' "$site" "$LISTEN_PORT" >>"$cfg"
+  if ! "$bin" validate --config "$cfg" --adapter caddyfile >/dev/null 2>&1; then
+    warn "reverse-proxy config validation failed; restoring ${cfg}"
+    cp -a "$backup" "$cfg"
+    return 1
+  fi
+  unit=$(ps -o unit= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [[ -z $unit ]]; then
+    unit=$(systemctl list-units --type=service --state=running --no-legend 2>/dev/null | awk '$1 ~ /caddy/ { print $1; exit }')
+  fi
+  if [[ -n $unit ]] && ! systemctl try-reload-or-restart "$unit" >/dev/null 2>&1; then
+    warn "could not reload ${unit}; check the proxy configuration"
+  fi
+  info "reverse proxy updated: ${site} -> 127.0.0.1:${LISTEN_PORT}"
 }
 
 wait_port_free() {
@@ -2131,6 +2170,9 @@ apply_ui() {
 
   progress 98 "installing the openweb command"
   install_manager
+  if [[ $TLS_MODE == proxy ]]; then
+    configure_caddy_proxy || true
+  fi
   progress 100 "done"
   print_summary
 }
@@ -2239,6 +2281,10 @@ cmd_install() {
     fi
     if [[ -z $OPT_HOST ]]; then
       LISTEN_HOST=127.0.0.1
+    fi
+    if [[ -z $HTTPS_PORT ]]; then
+      HTTPS_PORT=8443
+      port_free 8443 || HTTPS_PORT=$(random_free_port 80 "$LISTEN_PORT" "$UPSTREAM_PORT")
     fi
   fi
 
