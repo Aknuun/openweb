@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.12.2"
+readonly SCRIPT_VERSION="2.12.3"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly TELEGRAM_URL="https://t.me/openWEBcode"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"

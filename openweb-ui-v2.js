@@ -642,10 +642,12 @@
   function titlebar() {
     const header =
       document.querySelector('header[data-slot="titlebar-v2"]') ||
-      document.querySelector('header[data-slot^="titlebar"]') ||
-      document.querySelector("header");
-    if (!header) return null;
-    return header.querySelector(".justify-end") || header;
+      document.querySelector('header[data-slot^="titlebar"]');
+    if (header) return header.querySelector(".justify-end") || header;
+    // Do not mount on the "connect to a server" screen, which has its own header.
+    if (document.querySelector(".server-connect-content")) return null;
+    const fallback = document.querySelector("header");
+    return fallback ? fallback.querySelector(".justify-end") || fallback : null;
   }
 
   function ensureToolbar() {
