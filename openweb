@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.12.3"
+readonly SCRIPT_VERSION="2.13.0"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly TELEGRAM_URL="https://t.me/openWEBcode"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
@@ -25,6 +25,7 @@ readonly UI_FILE="${RUNNER_DIR}/ui.js"
 readonly INJECTOR_FILE="${RUNNER_DIR}/inject.js"
 readonly MANAGER_BIN="/usr/local/bin/openweb"
 readonly AGENT_SKILLS_TARBALL="https://github.com/addyosmani/agent-skills/archive/refs/heads/main.tar.gz"
+readonly UNSLOP_TARBALL="https://github.com/heydamir/unslop/archive/refs/heads/main.tar.gz"
 readonly GRAPHIFY_PACKAGE="graphifyy"
 readonly DCP_PLUGIN_PACKAGE="@tarquinen/opencode-dcp@latest"
 readonly MEM_PLUGIN_PACKAGE="opencode-mem@latest"
@@ -239,7 +240,7 @@ ${C_BOLD}Commands${C_RESET}
   install       Install or update OpenCode Web (interactive by default)
   update        Download the latest openweb and reapply the installation
   features      List, enable or disable UI features (interactive without arguments)
-  addons        Install optional agent add-ons (skills, graphify, pruning, memory)
+  addons        Install optional agent add-ons (skills, unslop, graphify, pruning, memory)
   on / off      Quick enable/disable features by number or name
   status        Show service state, mode, URL and credentials
   logs          Follow the OpenCode and nginx logs
@@ -306,7 +307,7 @@ ${C_BOLD}Examples${C_RESET}
   sudo openweb install --modified --features usage,reasoning,theme
   sudo openweb install --original --port 8080
   sudo openweb install --domain 167.235.194.13.nip.io --tls letsencrypt
-  sudo openweb addons install      # agent-skills + graphify
+  sudo openweb addons install      # agent-skills + unslop + graphify
   sudo openweb features            # numbered feature manager
   sudo openweb features 1 3 5      # toggle features by number
   sudo openweb features enable history,rtl
@@ -2746,6 +2747,33 @@ install_agent_skills() {
   info "agent-skills installed (${count} skills)"
 }
 
+install_unslop() {
+  need curl
+  info "installing unslop skill for ${SERVICE_USER}"
+
+  local tmp src dest
+  tmp=$(mktemp -d "${SERVICE_HOME}/.openweb-unslop.XXXXXX")
+  if ! curl -fsSL --retry 3 "$UNSLOP_TARBALL" -o "$tmp/unslop.tar.gz"; then
+    rm -rf "$tmp"
+    die "failed to download unslop"
+  fi
+  if ! extract_tarball "$tmp/unslop.tar.gz" "$tmp"; then
+    rm -rf "$tmp"
+    die "failed to extract unslop"
+  fi
+
+  src=$(find "$tmp" -type d -path '*/skills/unslop' -print -quit)
+  [[ -n $src ]] || { rm -rf "$tmp"; die "unslop archive has no skills/unslop directory"; }
+
+  dest="$SERVICE_HOME/.config/opencode/skills/unslop"
+  mkdir -p "$(dirname "$dest")"
+  rm -rf "$dest"
+  cp -a "$src" "$dest"
+  chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$dest" 2>/dev/null || true
+  rm -rf "$tmp"
+  info "unslop installed"
+}
+
 install_graphify() {
   need curl
   info "installing graphify for ${SERVICE_USER}"
@@ -2793,6 +2821,7 @@ addon_present() {
   [[ -f $config_file ]] || config_file="$SERVICE_HOME/.config/opencode/opencode.json"
   case $name in
     agent-skills) [[ -f "$SERVICE_HOME/.config/opencode/skills/using-agent-skills/SKILL.md" ]] ;;
+    unslop) [[ -f "$SERVICE_HOME/.config/opencode/skills/unslop/SKILL.md" ]] ;;
     graphify) [[ -f "$SERVICE_HOME/.opencode/plugins/graphify.js" ]] ;;
     context-pruning) grep -q 'opencode-dcp' "$config_file" 2>/dev/null ;;
     memory) grep -q 'opencode-mem' "$config_file" 2>/dev/null ;;
@@ -2804,6 +2833,9 @@ install_missing_addons() {
   addon_present agent-skills \
     || ( install_agent_skills ) \
     || warn "agent-skills failed; install later with: sudo openweb addons install agent-skills"
+  addon_present unslop \
+    || ( install_unslop ) \
+    || warn "unslop failed; install later with: sudo openweb addons install unslop"
   addon_present graphify \
     || ( install_graphify ) \
     || warn "graphify failed; install later with: sudo openweb addons install graphify"
@@ -2821,13 +2853,17 @@ addons_status() {
   local graph_state="${C_DIM}off${C_RESET}"
   local dcp_state="${C_DIM}off${C_RESET}"
   local mem_state="${C_DIM}off${C_RESET}"
+  local unslop_state="${C_DIM}off${C_RESET}"
   local count=0
   local config_file="$SERVICE_HOME/.config/opencode/opencode.jsonc"
   [[ -f $config_file ]] || config_file="$SERVICE_HOME/.config/opencode/opencode.json"
 
   if [[ -f "$skills_dir/using-agent-skills/SKILL.md" ]]; then
-    count=$(find "$skills_dir" -mindepth 1 -maxdepth 1 -type d ! -name graphify | wc -l)
+    count=$(find "$skills_dir" -mindepth 1 -maxdepth 1 -type d ! -name graphify ! -name unslop | wc -l)
     agent_state="${C_GREEN}on${C_RESET} (${count} skills)"
+  fi
+  if [[ -f "$skills_dir/unslop/SKILL.md" ]]; then
+    unslop_state="${C_GREEN}on${C_RESET}"
   fi
   if [[ -f "$skills_dir/graphify/SKILL.md" ]] \
     && [[ -f "$SERVICE_HOME/.opencode/plugins/graphify.js" ]] \
@@ -2843,6 +2879,7 @@ addons_status() {
 
   printf '%sOptional agent skills%s\n' "$C_BOLD" "$C_RESET"
   printf '  %sagent-skills%s  %b\n' "$C_BOLD" "$C_RESET" "$agent_state"
+  printf '  %sunslop%s        %b\n' "$C_BOLD" "$C_RESET" "$unslop_state"
   printf '  %sgraphify%s      %b\n' "$C_BOLD" "$C_RESET" "$graph_state"
   printf '  %scontext-pruning%s %b\n' "$C_BOLD" "$C_RESET" "$dcp_state"
   printf '  %smemory%s        %b\n' "$C_BOLD" "$C_RESET" "$mem_state"
@@ -2871,12 +2908,16 @@ cmd_addons() {
         case $target in
           all)
             install_agent_skills
+            install_unslop
             install_graphify
             install_context_pruning
             install_memory
             ;;
           agent-skills | skills)
             install_agent_skills
+            ;;
+          unslop)
+            install_unslop
             ;;
           graphify)
             install_graphify
@@ -2888,7 +2929,7 @@ cmd_addons() {
             install_memory
             ;;
           *)
-            die "unknown add-on: ${target} (agent-skills|graphify|context-pruning|memory|all)"
+            die "unknown add-on: ${target} (agent-skills|unslop|graphify|context-pruning|memory|all)"
             ;;
         esac
       done
