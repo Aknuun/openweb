@@ -1,7 +1,7 @@
 /*
  * openweb-ui-v2.js - quick toolbar for the native OpenCode v2 web UI.
  *
- * Adds reasoning/theme/history/settings/refresh to #opencode-titlebar-right.
+ * Adds reasoning/theme/history/settings/telegram/refresh to the v2 titlebar.
  * The OpenCode v2 server stores its connection password in localStorage; the
  * history viewer reuses it for /api/session.
  */
@@ -20,6 +20,7 @@
     gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
     history: '<path d="M3 12a9 9 0 1 0 2.64-6.36"/><path d="M3 3v6h6"/><path d="M12 7v5l3 2"/>',
     refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
+    telegram: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
   };
 
   const style = document.createElement("style");
@@ -627,13 +628,22 @@
         title: "بارگذاری مجدد صفحه",
         icon: "refresh",
         onClick: () => location.reload(),
+      }),
+      actionButton({
+        action: "telegram",
+        title: "کانال تلگرام openWEBcode",
+        icon: "telegram",
+        onClick: () => window.open("https://t.me/openWEBcode", "_blank", "noopener"),
       })
     );
     return bar;
   }
 
   function titlebar() {
-    const header = document.querySelector('header[data-slot="titlebar-v2"]');
+    const header =
+      document.querySelector('header[data-slot="titlebar-v2"]') ||
+      document.querySelector('header[data-slot^="titlebar"]') ||
+      document.querySelector("header");
     if (!header) return null;
     return header.querySelector(".justify-end") || header;
   }
