@@ -6,8 +6,9 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.12.0"
+readonly SCRIPT_VERSION="2.12.1"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
+readonly TELEGRAM_URL="https://t.me/openWEBcode"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
 readonly UI_URL="${OPENWEB_UI_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui.js}"
 readonly UI_V2_URL="${OPENWEB_UI_V2_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb-ui-v2.js}"
@@ -316,6 +317,7 @@ ${C_BOLD}Examples${C_RESET}
   sudo openweb status
 
 Repository: ${REPO_URL}
+Telegram:   ${TELEGRAM_URL}
 EOF
 }
 
@@ -1995,6 +1997,7 @@ print_summary() {
 
   printf '%s================================================================%s\n\n' "$C_CYAN" "$C_RESET"
   print_login_banner "${https_value:-$http_url_value}"
+  printf '  %sUpdates & support:%s %s\n\n' "$C_DIM" "$C_RESET" "$TELEGRAM_URL"
 }
 
 install_manager() {

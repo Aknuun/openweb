@@ -16,6 +16,8 @@ Manage it afterwards with `sudo openweb` (panel) and `sudo openweb update`.
 
 [Persian version](README.fa.md)
 
+Updates and support: [Telegram @openWEBcode](https://t.me/openWEBcode)
+
 ## License
 
 MIT. The optional UI helper is derived from [CodeHub](https://github.com/Aknuun/codehub).

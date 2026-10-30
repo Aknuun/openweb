@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/Aknuun/openweb/main/openweb | sudo 
 
 [English version](README.md)
 
+خبرها و پشتیبانی: [تلگرام @openWEBcode](https://t.me/openWEBcode)
+
 ## مجوز
 
 MIT. رابط اختیاری برگرفته از [CodeHub](https://github.com/Aknuun/codehub) است.
