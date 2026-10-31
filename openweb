@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 
 readonly SCRIPT_NAME="openweb"
-readonly SCRIPT_VERSION="2.13.0"
+readonly SCRIPT_VERSION="2.13.1"
 readonly REPO_URL="https://github.com/Aknuun/openweb"
 readonly TELEGRAM_URL="https://t.me/openWEBcode"
 readonly SCRIPT_URL="${OPENWEB_SCRIPT_URL:-https://raw.githubusercontent.com/Aknuun/openweb/main/openweb}"
@@ -26,6 +26,7 @@ readonly INJECTOR_FILE="${RUNNER_DIR}/inject.js"
 readonly MANAGER_BIN="/usr/local/bin/openweb"
 readonly AGENT_SKILLS_TARBALL="https://github.com/addyosmani/agent-skills/archive/refs/heads/main.tar.gz"
 readonly UNSLOP_TARBALL="https://github.com/heydamir/unslop/archive/refs/heads/main.tar.gz"
+readonly FINDSKILLS_URL="https://raw.githubusercontent.com/vercel-labs/skills/main/skills/find-skills/SKILL.md"
 readonly GRAPHIFY_PACKAGE="graphifyy"
 readonly DCP_PLUGIN_PACKAGE="@tarquinen/opencode-dcp@latest"
 readonly MEM_PLUGIN_PACKAGE="opencode-mem@latest"
@@ -240,7 +241,7 @@ ${C_BOLD}Commands${C_RESET}
   install       Install or update OpenCode Web (interactive by default)
   update        Download the latest openweb and reapply the installation
   features      List, enable or disable UI features (interactive without arguments)
-  addons        Install optional agent add-ons (skills, unslop, graphify, pruning, memory)
+  addons        Install optional agent add-ons (skills, unslop, find-skills, graphify, pruning, memory)
   on / off      Quick enable/disable features by number or name
   status        Show service state, mode, URL and credentials
   logs          Follow the OpenCode and nginx logs
@@ -307,7 +308,7 @@ ${C_BOLD}Examples${C_RESET}
   sudo openweb install --modified --features usage,reasoning,theme
   sudo openweb install --original --port 8080
   sudo openweb install --domain 167.235.194.13.nip.io --tls letsencrypt
-  sudo openweb addons install      # agent-skills + unslop + graphify
+  sudo openweb addons install      # agent-skills + unslop + find-skills + graphify
   sudo openweb features            # numbered feature manager
   sudo openweb features 1 3 5      # toggle features by number
   sudo openweb features enable history,rtl
@@ -2774,6 +2775,21 @@ install_unslop() {
   info "unslop installed"
 }
 
+install_findskills() {
+  need curl
+  info "installing find-skills for ${SERVICE_USER}"
+
+  local dest="$SERVICE_HOME/.config/opencode/skills/find-skills"
+  mkdir -p "$dest"
+  if ! curl -fsSL --retry 3 "$FINDSKILLS_URL" -o "$dest/SKILL.md.tmp"; then
+    rm -f "$dest/SKILL.md.tmp"
+    die "failed to download find-skills"
+  fi
+  mv -f "$dest/SKILL.md.tmp" "$dest/SKILL.md"
+  chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$dest" 2>/dev/null || true
+  info "find-skills installed"
+}
+
 install_graphify() {
   need curl
   info "installing graphify for ${SERVICE_USER}"
@@ -2822,6 +2838,7 @@ addon_present() {
   case $name in
     agent-skills) [[ -f "$SERVICE_HOME/.config/opencode/skills/using-agent-skills/SKILL.md" ]] ;;
     unslop) [[ -f "$SERVICE_HOME/.config/opencode/skills/unslop/SKILL.md" ]] ;;
+    find-skills) [[ -f "$SERVICE_HOME/.config/opencode/skills/find-skills/SKILL.md" ]] ;;
     graphify) [[ -f "$SERVICE_HOME/.opencode/plugins/graphify.js" ]] ;;
     context-pruning) grep -q 'opencode-dcp' "$config_file" 2>/dev/null ;;
     memory) grep -q 'opencode-mem' "$config_file" 2>/dev/null ;;
@@ -2836,6 +2853,9 @@ install_missing_addons() {
   addon_present unslop \
     || ( install_unslop ) \
     || warn "unslop failed; install later with: sudo openweb addons install unslop"
+  addon_present find-skills \
+    || ( install_findskills ) \
+    || warn "find-skills failed; install later with: sudo openweb addons install find-skills"
   addon_present graphify \
     || ( install_graphify ) \
     || warn "graphify failed; install later with: sudo openweb addons install graphify"
@@ -2854,16 +2874,20 @@ addons_status() {
   local dcp_state="${C_DIM}off${C_RESET}"
   local mem_state="${C_DIM}off${C_RESET}"
   local unslop_state="${C_DIM}off${C_RESET}"
+  local find_state="${C_DIM}off${C_RESET}"
   local count=0
   local config_file="$SERVICE_HOME/.config/opencode/opencode.jsonc"
   [[ -f $config_file ]] || config_file="$SERVICE_HOME/.config/opencode/opencode.json"
 
   if [[ -f "$skills_dir/using-agent-skills/SKILL.md" ]]; then
-    count=$(find "$skills_dir" -mindepth 1 -maxdepth 1 -type d ! -name graphify ! -name unslop | wc -l)
+    count=$(find "$skills_dir" -mindepth 1 -maxdepth 1 -type d ! -name graphify ! -name unslop ! -name find-skills | wc -l)
     agent_state="${C_GREEN}on${C_RESET} (${count} skills)"
   fi
   if [[ -f "$skills_dir/unslop/SKILL.md" ]]; then
     unslop_state="${C_GREEN}on${C_RESET}"
+  fi
+  if [[ -f "$skills_dir/find-skills/SKILL.md" ]]; then
+    find_state="${C_GREEN}on${C_RESET}"
   fi
   if [[ -f "$skills_dir/graphify/SKILL.md" ]] \
     && [[ -f "$SERVICE_HOME/.opencode/plugins/graphify.js" ]] \
@@ -2880,6 +2904,7 @@ addons_status() {
   printf '%sOptional agent skills%s\n' "$C_BOLD" "$C_RESET"
   printf '  %sagent-skills%s  %b\n' "$C_BOLD" "$C_RESET" "$agent_state"
   printf '  %sunslop%s        %b\n' "$C_BOLD" "$C_RESET" "$unslop_state"
+  printf '  %sfind-skills%s   %b\n' "$C_BOLD" "$C_RESET" "$find_state"
   printf '  %sgraphify%s      %b\n' "$C_BOLD" "$C_RESET" "$graph_state"
   printf '  %scontext-pruning%s %b\n' "$C_BOLD" "$C_RESET" "$dcp_state"
   printf '  %smemory%s        %b\n' "$C_BOLD" "$C_RESET" "$mem_state"
@@ -2909,6 +2934,7 @@ cmd_addons() {
           all)
             install_agent_skills
             install_unslop
+            install_findskills
             install_graphify
             install_context_pruning
             install_memory
@@ -2918,6 +2944,9 @@ cmd_addons() {
             ;;
           unslop)
             install_unslop
+            ;;
+          find-skills | findskills)
+            install_findskills
             ;;
           graphify)
             install_graphify
@@ -2929,14 +2958,14 @@ cmd_addons() {
             install_memory
             ;;
           *)
-            die "unknown add-on: ${target} (agent-skills|unslop|graphify|context-pruning|memory|all)"
+            die "unknown add-on: ${target} (agent-skills|unslop|find-skills|graphify|context-pruning|memory|all)"
             ;;
         esac
       done
       info "add-ons installed. Start a new OpenCode session to load new skills/plugins."
       ;;
     *)
-      die "usage: openweb addons [status|install [agent-skills|graphify|context-pruning|memory|all]]"
+      die "usage: openweb addons [status|install [agent-skills|unslop|find-skills|graphify|context-pruning|memory|all]]"
       ;;
   esac
 }
